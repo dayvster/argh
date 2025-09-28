@@ -20,17 +20,15 @@ Curious about what's next? See planned and potential features in the [Roadmap](.
 
 ## Features
 
-- **Long and Short Flags/Options**: Register both `--flag` and `-f` for the same argument. Supports repeatable flags (e.g. `-v -v`).
-- **Options with Default Values**: Options can have default values and help text. Retrieve their value or use the default if not provided.
-- **Positional Arguments**: Define required or optional positional arguments (e.g. `myprog input.txt`).
-- **Required Arguments**: Mark any flag or option as required. Missing required arguments are reported as errors.
-- **Mutually Exclusive Groups**: Define groups of arguments that cannot be used together. The parser reports an error if more than one is present.
-- **Automatic Help and Error Output**: Built-in help message generation and clear error reporting for unknown, missing, or conflicting arguments.
-- **Simple API**: No macros, no code generation, no dependencies. Just register arguments and call `parse()`.
-- **Short and Long Option Aliases**: Use both `-n` and `--name` for the same option.
-- **Repeatable Flags**: Count how many times a flag appears (e.g. `-v -v -v`).
-- **Modern Zig Style**: Designed for Zig 0.15+, using idiomatic Zig patterns and memory management.
-- **MIT Licensed**: Permissive, open source, and ready for any project.
+- Long/short flags and options (e.g. `--help`, `-h`)
+- Options with default values
+- Required and positional arguments
+- Mutually exclusive groups
+- Repeatable flags (e.g. `-v -v`)
+- Automatic help and error output
+- Simple, no-macro API
+- Modern Zig 0.15+ style
+- MIT licensed
 
 ## Installation
 
