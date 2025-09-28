@@ -14,6 +14,8 @@ A modern, minimal argument parser for Zig.
 - Mutually exclusive groups
 - Helpful error and help messages
 
+[Planned Features & Roadmap](./PLANNED.md)
+
 ## Features
 
 - **Long and Short Flags/Options**: Register both `--flag` and `-f` for the same argument. Supports repeatable flags (e.g. `-v -v`).
