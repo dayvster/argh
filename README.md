@@ -7,26 +7,32 @@ A modern, minimal argument parser for Zig.
 
 ---
 
+
 **argh** is a simple, flexible argument parser for Zig projects. It supports:
 - Long and short flags/options (e.g. `--help`, `-h`)
 - Positional arguments
 - Required arguments
 - Mutually exclusive groups
 - Helpful error and help messages
+- Developer-selectable help formatting (flat/simple/complex grouping)
+- Fully documented API with Zig doc comments
 
 ## Roadmap
 
 Curious about what's next? See planned and potential features in the [Roadmap](./ROADMAP.md).
+
 
 ## Features
 
 - Simple, declarative API
 - Long and short flags/options (e.g. `--help`, `-h`)
 - Type-safe int/float options with min/max constraints
-- Positional arguments
+- Positional arguments with min/max count constraints
 - Required arguments
 - Mutually exclusive groups
 - Helpful error and help messages
+- Configurable help output style (see `HelpStyle`)
+- Fully documented API (Zig doc comments)
 
 ## Installation
 
@@ -62,15 +68,27 @@ pub fn main() !void {
     try parser.addPositional("input", "Input file", true, null);
     try parser.parse();
 
-    if (parser.errors.items.len > 0) {
-        parser.printErrors();
-        parser.printHelp();
-        return;
-    }
-    if (parser.flagPresent("--help")) {
-        parser.printHelp();
-        return;
-    }
+  if (parser.errors.items.len > 0) {
+    parser.printErrors();
+    parser.printHelp(argparse.Parser.HelpStyle.flat); // or .simple_grouped, .complex_grouped
+    return;
+  }
+  if (parser.flagPresent("--help")) {
+    parser.printHelp(argparse.Parser.HelpStyle.flat);
+    return;
+  }
+## Help Formatting Styles
+
+argh supports multiple help output styles via the `HelpStyle` enum:
+
+```zig
+parser.printHelp(argparse.Parser.HelpStyle.flat);           // Flat list (default)
+parser.printHelp(argparse.Parser.HelpStyle.simple_grouped); // Simple grouping (future)
+parser.printHelp(argparse.Parser.HelpStyle.complex_grouped);// Complex grouping (future)
+```
+
+This allows you to choose the help output style that best fits your CLI.
+
     const name = parser.getOption("--name") orelse "World";
     var input: []const u8 = "(none)";
     if (parser.positionals.items.len > 0 and parser.positionals.items[0].value != null) {
