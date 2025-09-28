@@ -14,7 +14,7 @@ A modern, minimal argument parser for Zig.
 - Mutually exclusive groups
 - Helpful error and help messages
 
-[Planned Features & Roadmap](./PLANNED.md)
+[Roadmap](./ROADMAP.md)
 
 ## Features
 
