@@ -237,4 +237,23 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| {
         run_example_int_float_options_cmd.addArgs(args);
     }
+
+    // Example: positional_minmax
+    const example_positional_minmax = b.addExecutable(.{
+        .name = "example-positional-minmax",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/positional_minmax.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "argh", .module = mod }},
+        }),
+    });
+    b.installArtifact(example_positional_minmax);
+    const run_example_positional_minmax = b.step("example-positional-minmax", "Run the positional min/max example");
+    const run_example_positional_minmax_cmd = b.addRunArtifact(example_positional_minmax);
+    run_example_positional_minmax.dependOn(&run_example_positional_minmax_cmd.step);
+    run_example_positional_minmax_cmd.step.dependOn(b.getInstallStep());
+    if (b.args) |args| {
+        run_example_positional_minmax_cmd.addArgs(args);
+    }
 }
