@@ -1,3 +1,33 @@
 zig-cache/
 zig-out/
 .zig-cache/
+
+# Editor and OS files
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.code-workspace
+
+# Environment files
+.env
+.env.local
+
+# Build/test artifacts
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.log
+*.tmp
+*.bak
+
+# Dependency/package manager
+zigmod.lock
+zigmod-packages/
