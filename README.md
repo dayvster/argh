@@ -56,17 +56,17 @@ const std = @import("std");
 const argparse = @import("argh");
 
 pub fn main() !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+  var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+  defer arena.deinit();
+  const allocator = arena.allocator();
+  const args = try std.process.argsAlloc(allocator);
+  defer std.process.argsFree(allocator, args);
 
-    var parser = argparse.Parser.init(allocator, args);
-    try parser.addFlagWithShort("--help", "-h", "Show help message");
-    try parser.addOptionWithShort("--name", "-n", "World", "Name to greet");
-    try parser.addPositional("input", "Input file", true, null);
-    try parser.parse();
+  var parser = argparse.Parser.init(allocator, args);
+  try parser.addFlagWithShort("--help", "-h", "Show help message");
+  try parser.addOptionWithShort("--name", "-n", "World", "Name to greet");
+  try parser.addPositionalWithCount("input", "Input files", 1, 2); // min/max count
+  try parser.parse();
 
   if (parser.errors.items.len > 0) {
     parser.printErrors();
@@ -77,24 +77,11 @@ pub fn main() !void {
     parser.printHelp(argparse.Parser.HelpStyle.flat);
     return;
   }
-## Help Formatting Styles
-
-argh supports multiple help output styles via the `HelpStyle` enum:
-
-```zig
-parser.printHelp(argparse.Parser.HelpStyle.flat);           // Flat list (default)
-parser.printHelp(argparse.Parser.HelpStyle.simple_grouped); // Simple grouping (future)
-parser.printHelp(argparse.Parser.HelpStyle.complex_grouped);// Complex grouping (future)
-```
-
-This allows you to choose the help output style that best fits your CLI.
-
-    const name = parser.getOption("--name") orelse "World";
-    var input: []const u8 = "(none)";
-    if (parser.positionals.items.len > 0 and parser.positionals.items[0].value != null) {
-        input = parser.positionals.items[0].value.?;
-    }
-    std.debug.print("Hello, {s}! Input: {s}\n", .{ name, input });
+  const name = parser.getOption("--name") orelse "World";
+  std.debug.print("Hello, {s}!\n", .{ name });
+  for (parser.positionals.items) |pos| {
+    if (pos.value) |val| std.debug.print("Input: {s}\n", .{val});
+  }
 }
 ```
 
@@ -105,22 +92,28 @@ const std = @import("std");
 const argparse = @import("argh");
 
 pub fn main() !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+  var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+  defer arena.deinit();
+  const allocator = arena.allocator();
+  const args = try std.process.argsAlloc(allocator);
+  defer std.process.argsFree(allocator, args);
 
-    var parser = argparse.Parser.init(allocator, args);
-    try parser.addIntOption("--count", 5, "How many times", 1, 10);
-    try parser.addFloatOption("--ratio", 0.5, "A ratio", 0.0, 1.0);
-    try parser.parse();
+  var parser = argparse.Parser.init(allocator, args);
+  try parser.addIntOption("--count", 5, "How many times", 1, 10);
+  try parser.addFloatOption("--ratio", 0.5, "A ratio", 0.0, 1.0);
+  try parser.parse();
 
-    const count = try parser.getOptionInt("--count") orelse 5;
-    const ratio = try parser.getOptionFloat("--ratio") orelse 0.5;
+  if (parser.errors.items.len > 0) {
+    parser.printErrors();
+    parser.printHelp(argparse.Parser.HelpStyle.flat);
+    return;
+  }
 
-    std.debug.print("count: {d}\n", .{count});
-    std.debug.print("ratio: {:.2}\n", .{ratio});
+  const count = try parser.getOptionInt("--count") orelse 5;
+  const ratio = try parser.getOptionFloat("--ratio") orelse 0.5;
+
+  std.debug.print("count: {d}\n", .{count});
+  std.debug.print("ratio: {:.2}\n", .{ratio});
 }
 ```
 
