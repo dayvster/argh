@@ -218,4 +218,23 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| {
         run_example_advanced_cmd.addArgs(args);
     }
+
+    // Example: int_float_options
+    const example_int_float_options = b.addExecutable(.{
+        .name = "example-int-float-options",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/int_float_options.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "argh", .module = mod }},
+        }),
+    });
+    b.installArtifact(example_int_float_options);
+    const run_example_int_float_options = b.step("example-int-float-options", "Run the int/float options example");
+    const run_example_int_float_options_cmd = b.addRunArtifact(example_int_float_options);
+    run_example_int_float_options.dependOn(&run_example_int_float_options_cmd.step);
+    run_example_int_float_options_cmd.step.dependOn(b.getInstallStep());
+    if (b.args) |args| {
+        run_example_int_float_options_cmd.addArgs(args);
+    }
 }

@@ -22,7 +22,7 @@ pub const Parser = struct {
         group: ?[]const u8 = null,
     };
     /// Supported option value types.
-    pub const OptionType = enum { string, int, bool };
+    pub const OptionType = enum { string, int, float, bool };
     /// Information about an option argument.
     pub const OptionInfo = struct {
         help: []const u8,
@@ -31,6 +31,10 @@ pub const Parser = struct {
         required: bool = false,
         typ: OptionType = .string,
         group: ?[]const u8 = null,
+        min_int: ?i64 = null,
+        max_int: ?i64 = null,
+        min_float: ?f64 = null,
+        max_float: ?f64 = null,
     };
     /// Information about a positional argument.
     pub const PositionalInfo = struct {
@@ -106,6 +110,56 @@ pub const Parser = struct {
     /// Add a long option (e.g. --name) with default value and help text.
     pub fn addOption(self: *Parser, name: []const u8, default: []const u8, help: []const u8) !void {
         try self.options.put(self.allocator, name, OptionInfo{ .help = help, .value = default, .default = default });
+    }
+
+    /// Add an int option with optional min/max constraints.
+    pub fn addIntOption(self: *Parser, name: []const u8, default: i64, help: []const u8, min: ?i64, max: ?i64) !void {
+        const def_str = try std.fmt.allocPrint(self.allocator, "{}", .{default});
+        try self.options.put(self.allocator, name, OptionInfo{
+            .help = help,
+            .value = def_str,
+            .default = def_str,
+            .typ = .int,
+            .min_int = min,
+            .max_int = max,
+        });
+    }
+
+    /// Add a float option with optional min/max constraints.
+    pub fn addFloatOption(self: *Parser, name: []const u8, default: f64, help: []const u8, min: ?f64, max: ?f64) !void {
+        const def_str = try std.fmt.allocPrint(self.allocator, "{}", .{default});
+        try self.options.put(self.allocator, name, OptionInfo{
+            .help = help,
+            .value = def_str,
+            .default = def_str,
+            .typ = .float,
+            .min_float = min,
+            .max_float = max,
+        });
+    }
+
+    /// Get the value of an int option, or error if not present or invalid.
+    pub fn getOptionInt(self: *Parser, name: []const u8) !?i64 {
+        if (self.options.get(name)) |opt| {
+            if (opt.typ != .int) return error.InvalidType;
+            const val = try std.fmt.parseInt(i64, opt.value, 10);
+            if (opt.min_int) |min| if (val < min) return error.OutOfRange;
+            if (opt.max_int) |max| if (val > max) return error.OutOfRange;
+            return val;
+        }
+        return null;
+    }
+
+    /// Get the value of a float option, or error if not present or invalid.
+    pub fn getOptionFloat(self: *Parser, name: []const u8) !?f64 {
+        if (self.options.get(name)) |opt| {
+            if (opt.typ != .float) return error.InvalidType;
+            const val = try std.fmt.parseFloat(f64, opt.value);
+            if (opt.min_float) |min| if (val < min) return error.OutOfRange;
+            if (opt.max_float) |max| if (val > max) return error.OutOfRange;
+            return val;
+        }
+        return null;
     }
 
     /// Parse the arguments, populating values and errors.
@@ -249,4 +303,26 @@ test "basic flag and option parsing" {
     try parser.parse();
     try std.testing.expect(parser.flagPresent("--help"));
     try std.testing.expectEqualStrings("zig", parser.getOption("--name") orelse "");
+}
+
+test "int/float option min/max constraints" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var args = [_][]const u8{ "--count", "7", "--ratio", "0.8" };
+    var parser = Parser.init(allocator, &args);
+    try parser.addIntOption("--count", 5, "How many times", 1, 10);
+    try parser.addFloatOption("--ratio", 0.5, "A ratio", 0.0, 1.0);
+    try parser.parse();
+    try std.testing.expectEqual(@as(i64, 7), try parser.getOptionInt("--count") orelse 0);
+    try std.testing.expectEqual(@as(f64, 0.8), try parser.getOptionFloat("--ratio") orelse 0.0);
+
+    // Out of range
+    var args2 = [_][]const u8{ "--count", "20", "--ratio", "-0.1" };
+    var parser2 = Parser.init(allocator, &args2);
+    try parser2.addIntOption("--count", 5, "How many times", 1, 10);
+    try parser2.addFloatOption("--ratio", 0.5, "A ratio", 0.0, 1.0);
+    try parser2.parse();
+    try std.testing.expectError(error.OutOfRange, parser2.getOptionInt("--count"));
+    try std.testing.expectError(error.OutOfRange, parser2.getOptionFloat("--ratio"));
 }

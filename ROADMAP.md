@@ -4,7 +4,7 @@ This document tracks planned and potential features for future releases of argh.
 
 ## Roadmap
 
-- [ ] Type-safe option parsing (int, bool, float, enums)
+- [x] Type-safe option parsing (int, float, min/max)
 - [ ] Environment variable fallback for options
 - [ ] Subcommand support (e.g. `git commit`)
 - [ ] Argument deprecation warnings

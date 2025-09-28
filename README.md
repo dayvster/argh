@@ -20,15 +20,13 @@ Curious about what's next? See planned and potential features in the [Roadmap](.
 
 ## Features
 
-- Long/short flags and options (e.g. `--help`, `-h`)
-- Options with default values
-- Required and positional arguments
+- Simple, declarative API
+- Long and short flags/options (e.g. `--help`, `-h`)
+- Type-safe int/float options with min/max constraints
+- Positional arguments
+- Required arguments
 - Mutually exclusive groups
-- Repeatable flags (e.g. `-v -v`)
-- Automatic help and error output
-- Simple, no-macro API
-- Modern Zig 0.15+ style
-- MIT licensed
+- Helpful error and help messages
 
 ## Installation
 
@@ -79,6 +77,32 @@ pub fn main() !void {
         input = parser.positionals.items[0].value.?;
     }
     std.debug.print("Hello, {s}! Input: {s}\n", .{ name, input });
+}
+```
+
+## Example: Type-safe int/float options
+
+```zig
+const std = @import("std");
+const argparse = @import("argh");
+
+pub fn main() !void {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
+
+    var parser = argparse.Parser.init(allocator, args);
+    try parser.addIntOption("--count", 5, "How many times", 1, 10);
+    try parser.addFloatOption("--ratio", 0.5, "A ratio", 0.0, 1.0);
+    try parser.parse();
+
+    const count = try parser.getOptionInt("--count") orelse 5;
+    const ratio = try parser.getOptionFloat("--ratio") orelse 0.5;
+
+    std.debug.print("count: {d}\n", .{count});
+    std.debug.print("ratio: {:.2}\n", .{ratio});
 }
 ```
 
