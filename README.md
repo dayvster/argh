@@ -45,8 +45,13 @@ zig fetch --save git+https://github.com/dayvster/argh
 Then add to your `build.zig`:
 
 ```zig
-const argh = b.dependency("argh", .{});
-exe.addModule("argh", argh.module("argh"));
+const argh_pkg = b.dependency("argh", .{
+    .target = target,
+    .optimize = optimize,
+});
+
+// const exe = b.addExecutable(...); ...
+exe.root_module.addImport("argh", argh_pkg.module("argh"));
 ```
 
 ## Quick Example
