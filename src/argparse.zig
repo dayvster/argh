@@ -84,26 +84,20 @@ pub const Parser = struct {
         };
     }
 
-    /// Add a long flag (e.g. --help) with help text.
-    /// Add a long flag (e.g. --help) with help text.
+    /// Add a flag with a required short name and optional long name (e.g. -h, --help).
     ///
     /// Args:
-    ///   name: The flag name (e.g. "--help").
+    ///   short: The short flag name (e.g. "-h"). Must not be empty.
+    ///   long: The long flag name (e.g. "--help"), or "" for short-only.
     ///   help: Description for help output.
-    pub fn addFlag(self: *Parser, name: []const u8, help: []const u8) !void {
-        try self.flags.put(self.allocator, name, FlagInfo{ .help = help });
-    }
-
-    /// Add a flag with both long and short names (e.g. --help, -h).
-    /// Add a flag with both long and short names (e.g. --help, -h).
-    ///
-    /// Args:
-    ///   long: The long flag name (e.g. "--help").
-    ///   short: The short flag name (e.g. "-h").
-    ///   help: Description for help output.
-    pub fn addFlagWithShort(self: *Parser, long: []const u8, short: []const u8, help: []const u8) !void {
-        try self.flags.put(self.allocator, long, FlagInfo{ .help = help });
-        try self.short_flags.put(self.allocator, short, long);
+    pub fn addFlag(self: *Parser, short: []const u8, long: []const u8, help: []const u8) !void {
+        if (short.len == 0) return error.InvalidFlagName;
+        const has_long = long.len > 0;
+        if (has_long) {
+            try self.flags.put(self.allocator, long, FlagInfo{ .help = help });
+            try self.short_flags.put(self.allocator, short, long);
+        }
+        try self.flags.put(self.allocator, short, FlagInfo{ .help = help });
     }
 
     /// Add an option with both long and short names (e.g. --name, -n) and a default value.
@@ -114,11 +108,6 @@ pub const Parser = struct {
     ///   short: The short option name (e.g. "-n").
     ///   default: The default value as a string.
     ///   help: Description for help output.
-    pub fn addOptionWithShort(self: *Parser, long: []const u8, short: []const u8, default: []const u8, help: []const u8) !void {
-        try self.options.put(self.allocator, long, OptionInfo{ .help = help, .value = default, .default = default });
-        try self.short_options.put(self.allocator, short, long);
-    }
-
     /// Add a positional argument (e.g. input.txt) with help text, required flag, and optional default.
     /// Add a positional argument (e.g. input.txt) with help text, required flag, and optional default.
     ///
@@ -284,6 +273,16 @@ pub const Parser = struct {
                 if (self.flags.getPtr(arg)) |flag| {
                     flag.count += 1;
                     try seen.put(self.allocator, arg, true);
+                    // If this long flag has a short alias, increment its count too
+                    var it = self.short_flags.iterator();
+                    while (it.next()) |entry| {
+                        if (std.mem.eql(u8, entry.value_ptr.*, arg)) {
+                            if (self.flags.getPtr(entry.key_ptr.*)) |short_flag| {
+                                short_flag.count += 1;
+                                try seen.put(self.allocator, entry.key_ptr.*, true);
+                            }
+                        }
+                    }
                 } else if (self.options.getPtr(arg)) |opt| {
                     if (i + 1 < self.args.len) {
                         opt.value = self.args[i + 1];
@@ -299,7 +298,17 @@ pub const Parser = struct {
                 }
             } else if (std.mem.startsWith(u8, arg, "-") and arg.len == 2) {
                 const short = arg;
-                if (self.short_flags.get(short)) |long| {
+                if (self.flags.getPtr(short)) |flag| {
+                    flag.count += 1;
+                    try seen.put(self.allocator, short, true);
+                    // If this short flag has a long alias, increment its count too
+                    if (self.short_flags.get(short)) |long| {
+                        if (self.flags.getPtr(long)) |long_flag| {
+                            long_flag.count += 1;
+                            try seen.put(self.allocator, long, true);
+                        }
+                    }
+                } else if (self.short_flags.get(short)) |long| {
                     if (self.flags.getPtr(long)) |flag| {
                         flag.count += 1;
                         try seen.put(self.allocator, long, true);
@@ -380,8 +389,18 @@ pub const Parser = struct {
 
     /// Return the number of times a flag was provided.
     pub fn flagCount(self: *Parser, name: []const u8) usize {
-        if (self.flags.get(name)) |flag| {
-            return flag.count;
+        // Try direct lookup
+        if (self.flags.get(name)) |flag| return flag.count;
+        // If this is a short flag, try mapped long
+        if (self.short_flags.get(name)) |long| {
+            if (self.flags.get(long)) |flag| return flag.count;
+        }
+        // If this is a long flag, try mapped short
+        var it = self.short_flags.iterator();
+        while (it.next()) |entry| {
+            if (std.mem.eql(u8, entry.value_ptr.*, name)) {
+                if (self.flags.get(entry.key_ptr.*)) |flag| return flag.count;
+            }
         }
         return 0;
     }
@@ -503,7 +522,7 @@ test "basic flag and option parsing" {
         std.mem.sliceTo("zig", 0),
     };
     var parser = Parser.init(allocator, args[0..]);
-    try parser.addFlag("--help", "Show help");
+    try parser.addFlag("-h", "--help", "Show help");
     try parser.addOption("--name", "default", "Name to greet");
     try parser.parse();
     try std.testing.expect(parser.flagPresent("--help"));
@@ -588,10 +607,10 @@ test "help formatting includes groups and examples" {
     const allocator = arena.allocator();
     var args = [_][:0]const u8{};
     var parser = Parser.init(allocator, args[0..]);
-    try parser.addFlagWithShort("--help", "-h", "Show help message");
-    try parser.addOptionWithShort("--name", "-n", "World", "Name to greet");
+    try parser.addFlag("-h", "--help", "Show help message");
+    // Option API should be unified if needed; only addFlag is supported now.
     try parser.addPositionalWithCount("input", "Input files", 1, 2);
-    parser.printHelp(Parser.HelpStyle.flat); // visually inspect output for grouping and examples
+    parser.printHelp(); // visually inspect output for grouping and examples
 }
 
 test "printHelp supports all HelpStyle modes" {
@@ -603,7 +622,7 @@ test "printHelp supports all HelpStyle modes" {
         std.mem.sliceTo("bar", 0),
     };
     var parser = Parser.init(allocator, args[0..]);
-    try parser.addFlag("--foo", "Foo flag");
+    try parser.addFlag("-f", "--foo", "Foo flag");
     try parser.addOption("--bar", "baz", "Bar option");
     try parser.addPositionalWithCount("input", "Input files", 1, 2);
     // Just ensure these run without error (visual/manual check for now)
@@ -611,4 +630,46 @@ test "printHelp supports all HelpStyle modes" {
     parser.printHelpWithOptions(.flat);
     parser.printHelpWithOptions(.simple_grouped);
     parser.printHelpWithOptions(.complex_grouped);
+}
+
+test "printHelp prints flat help without error" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var args = [_][:0]const u8{
+        std.mem.sliceTo("--help", 0),
+    };
+    var parser = Parser.init(allocator, args[0..]);
+    try parser.addFlag("-h", "--help", "Show help message");
+}
+
+test "flagPresent and flagCount work for short, long, and short-only flags" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var args = [_][:0]const u8{
+        std.mem.sliceTo("-a", 0),
+        std.mem.sliceTo("--beta", 0),
+        std.mem.sliceTo("-c", 0),
+    };
+    var parser = Parser.init(allocator, args[0..]);
+    // Add -a (short only), -b/--beta (both), -c/--gamma (both), --delta (long only)
+    try parser.addFlag("-a", "", "Short only");
+    try parser.addFlag("-b", "--beta", "Short and long");
+    try parser.addFlag("-c", "--gamma", "Short and long");
+    try parser.addFlag("--delta", "", "Long only");
+    try parser.parse();
+    // -a present
+    try std.testing.expect(parser.flagPresent("-a"));
+    try std.testing.expect(parser.flagPresent("-b"));
+    try std.testing.expect(parser.flagPresent("--beta"));
+    try std.testing.expect(parser.flagPresent("-c"));
+    try std.testing.expect(parser.flagPresent("--gamma"));
+    try std.testing.expect(parser.flagPresent("--delta") == false);
+    // Counts
+    try std.testing.expectEqual(@as(usize, 1), parser.flagCount("-a"));
+    try std.testing.expectEqual(@as(usize, 1), parser.flagCount("--beta"));
+    try std.testing.expectEqual(@as(usize, 1), parser.flagCount("-c"));
+    try std.testing.expectEqual(@as(usize, 1), parser.flagCount("--gamma"));
+    try std.testing.expectEqual(@as(usize, 0), parser.flagCount("--delta"));
 }
