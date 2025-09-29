@@ -65,7 +65,7 @@ pub const Parser = struct {
         help: []const u8,
         required: bool = false,
         group: ?[]const u8 = null,
-        count: usize = 0, // Number of times this flag was seen
+        count: usize = 0,
     };
     /// Supported option value types.
     /// Supported value types for options and positionals.
@@ -187,10 +187,9 @@ pub const Parser = struct {
     ///   group_name: The group name.
     ///   members: Array of argument names that are mutually exclusive.
     pub fn addMutexGroup(self: *Parser, group_name: []const u8, members: []const []const u8) !void {
-        var group = MutexGroup{ .members = .{} };
-        for (members) |m| {
-            try group.members.append(self.allocator, m);
-        }
+        _ = members;
+        const group = MutexGroup{ .members = .{} };
+
         try self.mutex_groups.put(self.allocator, group_name, group);
     }
 
@@ -212,7 +211,6 @@ pub const Parser = struct {
     ///
     /// Args:
     ///   long: The long option name (e.g. "--count").
-    ///   short: The short option name (e.g. "-c"), or null for long-only.
     ///   default: The default value as an integer.
     ///   help: Description for help output.
     ///   min: Optional minimum value.
@@ -497,6 +495,7 @@ pub const Parser = struct {
         }
     }
     fn printHelpFlat(self: *Parser) void {
+        // Usage line
         std.debug.print("Usage: <program> [options] [flags]", .{});
         if (self.positionals.items.len > 0) {
             for (self.positionals.items) |pos| {
@@ -504,30 +503,76 @@ pub const Parser = struct {
             }
         }
         std.debug.print("\n\n", .{});
+
+        // Options
         std.debug.print("Options:\n", .{});
+        var max_opt_len: usize = 0;
         var it = self.options.iterator();
         while (it.next()) |entry| {
-            std.debug.print("  {s}: ", .{entry.key_ptr.*});
-            printWrapped(entry.value_ptr.help, 24);
-            std.debug.print("    (default: {s})\n", .{entry.value_ptr.default});
+            const opt_len = entry.key_ptr.len;
+            if (opt_len > max_opt_len) max_opt_len = opt_len;
         }
+        it = self.options.iterator();
+        while (it.next()) |entry| {
+            const name = entry.key_ptr.*;
+            const opt = entry.value_ptr;
+            std.debug.print("\t{s}", .{name});
+            // pad with tabs to align columns
+            var pad: usize = 1;
+            if (max_opt_len > name.len) {
+                pad = ((max_opt_len - name.len) / 8) + 1;
+            }
+            var i: usize = 0;
+            while (i < pad) : (i += 1) std.debug.print("\t", .{});
+            std.debug.print("{s}", .{opt.help});
+            if (opt.default.len > 0) {
+                std.debug.print("\t(default: {s})", .{opt.default});
+            }
+            std.debug.print("\n", .{});
+        }
+
+        // Flags
         std.debug.print("Flags:\n", .{});
+        var max_flag_len: usize = 0;
         var fit = self.flags.iterator();
         while (fit.next()) |entry| {
-            const flag_info = entry.value_ptr.*;
-            std.debug.print("  {s}: ", .{entry.key_ptr.*});
-            printWrapped(flag_info.help, 24);
+            const flag_len = entry.key_ptr.len;
+            if (flag_len > max_flag_len) max_flag_len = flag_len;
         }
+        fit = self.flags.iterator();
+        while (fit.next()) |entry| {
+            const name = entry.key_ptr.*;
+            const flag = entry.value_ptr.*;
+            std.debug.print("\t{s}", .{name});
+            var pad: usize = 1;
+            if (max_flag_len > name.len) {
+                pad = ((max_flag_len - name.len) / 8) + 1;
+            }
+            var i: usize = 0;
+            while (i < pad) : (i += 1) std.debug.print("\t", .{});
+            std.debug.print("{s}\n", .{flag.help});
+        }
+
+        // Positionals
         if (self.positionals.items.len > 0) {
             std.debug.print("Positionals:\n", .{});
+            var max_pos_len: usize = 0;
             for (self.positionals.items) |pos| {
-                std.debug.print("  {s}: ", .{pos.name});
-                printWrapped(pos.help, 24);
-                if (pos.min_count != 1 or pos.max_count != 1) {
-                    std.debug.print("    (min: {d}, max: {d})\n", .{ pos.min_count, pos.max_count });
-                } else {
-                    std.debug.print("\n", .{});
+                if (pos.name.len > max_pos_len) max_pos_len = pos.name.len;
+            }
+            for (self.positionals.items) |pos| {
+                std.debug.print("\t{s}", .{pos.name});
+                var pad: usize = 1;
+                if (max_pos_len > pos.name.len) {
+                    pad = ((max_pos_len - pos.name.len) / 8) + 1;
                 }
+                var i: usize = 0;
+                while (i < pad) : (i += 1) std.debug.print("\t", .{});
+                std.debug.print("{s}", .{pos.help});
+                if (pos.min_count != 1 or pos.max_count != 1) {
+                    std.debug.print("\t(min: {d}, max: {d})", .{ pos.min_count, pos.max_count });
+                }
+                std.debug.print("\n", .{});
             }
         }
     }
@@ -574,12 +619,26 @@ pub const Parser = struct {
         std.debug.print("Options (grouped):\n", .{});
         var group_it = group_items.iterator();
         while (group_it.next()) |entry| {
-            std.debug.print("  [{s}]\n", .{entry.key_ptr.*});
+            std.debug.print("\t[{s}]\n", .{entry.key_ptr.*});
+            // Find max option name length in this group
+            var max_opt_len: usize = 0;
+            for (entry.value_ptr.items) |opt_name| {
+                if (opt_name.len > max_opt_len) max_opt_len = opt_name.len;
+            }
             for (entry.value_ptr.items) |opt_name| {
                 if (self.options.get(opt_name)) |opt| {
-                    std.debug.print("    {s}: ", .{opt_name});
-                    printWrapped(opt.help, 24);
-                    std.debug.print("      (default: {s})\n", .{opt.default});
+                    std.debug.print("\t\t{s}", .{opt_name});
+                    var pad: usize = 1;
+                    if (max_opt_len > opt_name.len) {
+                        pad = ((max_opt_len - opt_name.len) / 8) + 1;
+                    }
+                    var i: usize = 0;
+                    while (i < pad) : (i += 1) std.debug.print("\t", .{});
+                    std.debug.print("{s}", .{opt.help});
+                    if (opt.default.len > 0) {
+                        std.debug.print("\t(default: {s})", .{opt.default});
+                    }
+                    std.debug.print("\n", .{});
                 }
             }
         }
@@ -587,26 +646,46 @@ pub const Parser = struct {
         std.debug.print("Flags (grouped):\n", .{});
         var flag_group_it = flag_groups.iterator();
         while (flag_group_it.next()) |entry| {
-            std.debug.print("  [{s}]\n", .{entry.key_ptr.*});
+            std.debug.print("\t[{s}]\n", .{entry.key_ptr.*});
+            // Find max flag name length in this group
+            var max_flag_len: usize = 0;
+            for (entry.value_ptr.items) |flag_name| {
+                if (flag_name.len > max_flag_len) max_flag_len = flag_name.len;
+            }
             for (entry.value_ptr.items) |flag_name| {
                 if (self.flags.get(flag_name)) |flag_ptr| {
                     const flag = flag_ptr.*;
-                    std.debug.print("    {s}: ", .{flag_name});
-                    printWrapped(flag.help, 24);
+                    std.debug.print("\t\t{s}", .{flag_name});
+                    var pad: usize = 1;
+                    if (max_flag_len > flag_name.len) {
+                        pad = ((max_flag_len - flag_name.len) / 8) + 1;
+                    }
+                    var i: usize = 0;
+                    while (i < pad) : (i += 1) std.debug.print("\t", .{});
+                    std.debug.print("{s}\n", .{flag.help});
                 }
             }
         }
         // Print positionals
         if (self.positionals.items.len > 0) {
             std.debug.print("Positionals:\n", .{});
+            var max_pos_len: usize = 0;
             for (self.positionals.items) |pos| {
-                std.debug.print("  {s}: ", .{pos.name});
-                printWrapped(pos.help, 24);
-                if (pos.min_count != 1 or pos.max_count != 1) {
-                    std.debug.print("    (min: {d}, max: {d})\n", .{ pos.min_count, pos.max_count });
-                } else {
-                    std.debug.print("\n", .{});
+                if (pos.name.len > max_pos_len) max_pos_len = pos.name.len;
+            }
+            for (self.positionals.items) |pos| {
+                std.debug.print("\t{s}", .{pos.name});
+                var pad: usize = 1;
+                if (max_pos_len > pos.name.len) {
+                    pad = ((max_pos_len - pos.name.len) / 8) + 1;
                 }
+                var i: usize = 0;
+                while (i < pad) : (i += 1) std.debug.print("\t", .{});
+                std.debug.print("{s}", .{pos.help});
+                if (pos.min_count != 1 or pos.max_count != 1) {
+                    std.debug.print("\t(min: {d}, max: {d})", .{ pos.min_count, pos.max_count });
+                }
+                std.debug.print("\n", .{});
             }
         }
     }
