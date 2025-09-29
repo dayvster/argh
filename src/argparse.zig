@@ -3,6 +3,13 @@ const std = @import("std");
 /// Argument parser for command-line interfaces.
 /// Main argument parser struct. Holds all argument definitions and parsing state.
 pub const Parser = struct {
+    /// Append an error message and optional argument to the errors list.
+    fn appendError(self: *Parser, msg: []const u8, arg: ?[]const u8) !void {
+        try self.errors.append(self.allocator, msg);
+        if (arg) |a| {
+            try self.errors.append(self.allocator, a);
+        }
+    }
     /// Controls the style of help output for the argument parser.
     pub const HelpStyle = enum {
         flat,
@@ -302,12 +309,10 @@ pub const Parser = struct {
                         i += 1;
                         try seen.put(self.allocator, arg, true);
                     } else {
-                        try self.errors.append(self.allocator, "Missing value for option: ");
-                        try self.errors.append(self.allocator, arg);
+                        try self.appendError("Missing value for option: ", arg);
                     }
                 } else {
-                    try self.errors.append(self.allocator, "Unknown argument: ");
-                    try self.errors.append(self.allocator, arg);
+                    try self.appendError("Unknown argument: ", arg);
                 }
             } else if (std.mem.startsWith(u8, arg, "-") and arg.len == 2) {
                 const short = arg;
@@ -344,13 +349,11 @@ pub const Parser = struct {
                             i += 1;
                             try seen.put(self.allocator, long, true);
                         } else {
-                            try self.errors.append(self.allocator, "Missing value for option: ");
-                            try self.errors.append(self.allocator, long);
+                            try self.appendError("Missing value for option: ", long);
                         }
                     }
                 } else {
-                    try self.errors.append(self.allocator, "Unknown short argument: ");
-                    try self.errors.append(self.allocator, short);
+                    try self.appendError("Unknown short argument: ", short);
                 }
             } else {
                 if (pos_idx < self.positionals.items.len) {
@@ -371,8 +374,7 @@ pub const Parser = struct {
                         pos_idx += 1;
                     }
                 } else {
-                    try self.errors.append(self.allocator, "Unexpected positional argument: ");
-                    try self.errors.append(self.allocator, arg);
+                    try self.appendError("Unexpected positional argument: ", arg);
                 }
             }
         }
@@ -382,8 +384,7 @@ pub const Parser = struct {
         while (fit.next()) |entry| {
             const flag_info = entry.value_ptr.*;
             if (flag_info.required and flag_info.count == 0) {
-                try self.errors.append(self.allocator, "Missing required flag: ");
-                try self.errors.append(self.allocator, entry.key_ptr.*);
+                try self.appendError("Missing required flag: ", entry.key_ptr.*);
             }
         }
         // Options
@@ -391,23 +392,19 @@ pub const Parser = struct {
         while (oit.next()) |entry| {
             const opt = entry.value_ptr;
             if (opt.required and (opt.value.ptr == opt.default.ptr or opt.value.len == 0)) {
-                try self.errors.append(self.allocator, "Missing required option: ");
-                try self.errors.append(self.allocator, entry.key_ptr.*);
+                try self.appendError("Missing required option: ", entry.key_ptr.*);
             }
         }
         // Positionals
         for (self.positionals.items, 0..) |pos, idx| {
             if (pos.required and pos.value == null and pos.default == null) {
-                try self.errors.append(self.allocator, "Missing required positional: ");
-                try self.errors.append(self.allocator, pos.name);
+                try self.appendError("Missing required positional: ", pos.name);
             }
             if (positional_counts[idx] < pos.min_count) {
-                try self.errors.append(self.allocator, "Too few values for positional: ");
-                try self.errors.append(self.allocator, pos.name);
+                try self.appendError("Too few values for positional: ", pos.name);
             }
             if (positional_counts[idx] > pos.max_count) {
-                try self.errors.append(self.allocator, "Too many values for positional: ");
-                try self.errors.append(self.allocator, pos.name);
+                try self.appendError("Too many values for positional: ", pos.name);
             }
         }
         // Check mutually exclusive groups
@@ -418,8 +415,7 @@ pub const Parser = struct {
                 if (seen.contains(m)) count += 1;
             }
             if (count > 1) {
-                try self.errors.append(self.allocator, "Mutually exclusive arguments used together in group: ");
-                try self.errors.append(self.allocator, entry.key_ptr.*);
+                try self.appendError("Mutually exclusive arguments used together in group: ", entry.key_ptr.*);
             }
         }
     }
@@ -505,12 +501,86 @@ pub const Parser = struct {
     }
 
     fn printHelpSimpleGrouped(self: *Parser) void {
-        std.debug.print("[simple_grouped help output not yet implemented]\n", .{});
-        self.printHelpFlat();
+        // Group options and flags by .group field
+        var group_map = std.StringHashMapUnmanaged(void){};
+        var group_items = std.StringHashMapUnmanaged(std.ArrayListUnmanaged([]const u8)){};
+        defer group_map.deinit(self.allocator);
+        defer group_items.deinit(self.allocator);
+        // Collect groups for options
+        var opt_it = self.options.iterator();
+        while (opt_it.next()) |entry| {
+            const group = entry.value_ptr.group orelse "(ungrouped)";
+            if (!group_map.contains(group)) {
+                group_map.put(self.allocator, group, {}) catch {};
+                group_items.put(self.allocator, group, std.ArrayListUnmanaged([]const u8){}) catch {};
+            }
+            if (group_items.getPtr(group)) |arr| {
+                arr.append(self.allocator, entry.key_ptr.*) catch {};
+            }
+        }
+        // Collect groups for flags
+        var flag_groups = std.StringHashMapUnmanaged(std.ArrayListUnmanaged([]const u8)){};
+        defer flag_groups.deinit(self.allocator);
+        var flag_it = self.flags.iterator();
+        while (flag_it.next()) |entry| {
+            const group = entry.value_ptr.*.group orelse "(ungrouped)";
+            if (!flag_groups.contains(group)) {
+                flag_groups.put(self.allocator, group, std.ArrayListUnmanaged([]const u8){}) catch {};
+            }
+            if (flag_groups.getPtr(group)) |arr| {
+                arr.append(self.allocator, entry.key_ptr.*) catch {};
+            }
+        }
+        std.debug.print("Usage: <program> [options] [flags]", .{});
+        if (self.positionals.items.len > 0) {
+            for (self.positionals.items) |pos| {
+                std.debug.print(" [{s}]", .{pos.name});
+            }
+        }
+        std.debug.print("\n\n", .{});
+        // Print grouped options
+        std.debug.print("Options (grouped):\n", .{});
+        var group_it = group_items.iterator();
+        while (group_it.next()) |entry| {
+            std.debug.print("  [{s}]\n", .{entry.key_ptr.*});
+            for (entry.value_ptr.items) |opt_name| {
+                if (self.options.get(opt_name)) |opt| {
+                    std.debug.print("    {s}: ", .{opt_name});
+                    printWrapped(opt.help, 24);
+                    std.debug.print("      (default: {s})\n", .{opt.default});
+                }
+            }
+        }
+        // Print grouped flags
+        std.debug.print("Flags (grouped):\n", .{});
+        var flag_group_it = flag_groups.iterator();
+        while (flag_group_it.next()) |entry| {
+            std.debug.print("  [{s}]\n", .{entry.key_ptr.*});
+            for (entry.value_ptr.items) |flag_name| {
+                if (self.flags.get(flag_name)) |flag_ptr| {
+                    const flag = flag_ptr.*;
+                    std.debug.print("    {s}: ", .{flag_name});
+                    printWrapped(flag.help, 24);
+                }
+            }
+        }
+        // Print positionals
+        if (self.positionals.items.len > 0) {
+            std.debug.print("Positionals:\n", .{});
+            for (self.positionals.items) |pos| {
+                std.debug.print("  {s}: ", .{pos.name});
+                printWrapped(pos.help, 24);
+                if (pos.min_count != 1 or pos.max_count != 1) {
+                    std.debug.print("    (min: {d}, max: {d})\n", .{ pos.min_count, pos.max_count });
+                } else {
+                    std.debug.print("\n", .{});
+                }
+            }
+        }
     }
 
     fn printHelpComplexGrouped(self: *Parser) void {
-        std.debug.print("[complex_grouped help output not yet implemented]\n", .{});
+        std.debug.print("[complex_grouped help output: show mutex groups and nested groupings here]\n", .{});
         self.printHelpFlat();
     }
 
