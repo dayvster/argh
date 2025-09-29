@@ -406,13 +406,10 @@ pub const Parser = struct {
         }
     }
 
-    /// Print a help message listing all options and flags.
-    /// Print a help message listing all options, flags, and positionals.
+    /// Prints a help message for all arguments, using the flat style by default.
     ///
-    /// Args:
-    ///   style: The help formatting style to use.
-    /// Print help. If a style is provided, use it; otherwise default to flat.
-    /// Print help using the default style (flat).
+    /// This is the simplest way to show help for your CLI. For advanced formatting,
+    /// use `printHelpWithOptions`.
     pub fn printHelp(self: *Parser) void {
         self.printHelpWithOptions(.flat);
     }
