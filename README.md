@@ -72,7 +72,7 @@ pub fn main() !void {
   defer std.process.argsFree(allocator, args);
 
   var parser = argparse.Parser.init(allocator, args);
-  try parser.addFlagWithShort("--help", "-h", "Show help message");
+  try parser.addFlag("-h", "--help", "Show help message");
   try parser.addOptionWithShort("--name", "-n", "World", "Name to greet");
   try parser.addPositionalWithCount("input", "Input files", 1, 2); // min/max count
   try parser.parse();
@@ -82,7 +82,7 @@ pub fn main() !void {
     parser.printHelp(); // prints help in flat style by default
     return;
   }
-  if (parser.flagPresent("--help")) {
+  if (parser.flagPresent("-h") or parser.flagPresent("--help")) {
     parser.printHelp(); // prints help in flat style by default
     return;
   }
@@ -129,7 +129,7 @@ pub fn main() !void {
 ## Usage
 
 - **Flags:**
-  - `try parser.addFlagWithShort("--help", "-h", "Show help message");`
+  - `try parser.addFlag("-h", "--help", "Show help message");`
 - **Options:**
   - `try parser.addOptionWithShort("--name", "-n", "World", "Name to greet");`
 - **Positional Arguments:**
