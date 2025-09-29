@@ -8,15 +8,62 @@ A modern, minimal argument parser for Zig.
 ---
 
 
+
 **argh** is a simple, flexible argument parser for Zig projects. It supports:
 - Long and short flags/options (e.g. `--help`, `-h`)
-- Positional arguments
+- Short options for all option types (e.g. `-n 5` for `--number 5`)
+- Positional arguments with min/max count
 - Required arguments
 - Mutually exclusive groups
 - Helpful error and help messages
 - Configurable help formatting (flat/simple/complex grouping; defaults to flat)
-- Configurable help output style (defaults to `flat`, can be changed via `printHelp`)
+- Grouped help output (see `printHelpWithOptions(.simple_grouped)`)
+- Type-safe int/float/bool options with min/max constraints
+- Memory-safe: all allocations are freed, no leaks
 - Fully documented API with Zig doc comments
+## Usage Example: Short Options and Grouped Help
+
+```zig
+const argh = @import("argh");
+const std = @import("std");
+
+pub fn main() !void {
+  var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+  defer arena.deinit();
+  const allocator = arena.allocator();
+  const args = try std.process.argsAlloc(allocator);
+  defer std.process.argsFree(allocator, args);
+
+  var parser = argh.Parser.init(allocator, args);
+  try parser.addFlag("-h", "--help", "Show help message");
+  try parser.addOption("--name", "-n", "world", "Name to greet");
+  try parser.addIntOption("--count", "-c", 1, "How many times", 1, 10);
+  try parser.addOption("--loud", "-L", "false", "Loud greeting");
+  parser.options.getPtr("--loud").?.typ = .bool;
+  try parser.parse();
+
+  if (parser.flagPresent("--help")) {
+    parser.printHelpWithOptions(.simple_grouped);
+    return;
+  }
+  const name = parser.getOption("--name") orelse "world";
+  const count = try parser.getOptionInt("--count") orelse 1;
+  const loud = try parser.getOptionBool("--loud") orelse false;
+  for (0..count) |_| {
+    if (loud) {
+      std.debug.print("HELLO, {s}!\n", .{name});
+    } else {
+      std.debug.print("Hello, {s}.\n", .{name});
+    }
+  }
+}
+```
+
+This example demonstrates:
+- Short and long options for all types
+- Type-safe int and bool option access
+- Grouped help output
+- Memory safety via arena allocator
 
 ## Roadmap
 

@@ -3,6 +3,38 @@ const std = @import("std");
 /// Argument parser for command-line interfaces.
 /// Main argument parser struct. Holds all argument definitions and parsing state.
 pub const Parser = struct {
+    /// Get the value of a bool option, or error if not present or invalid.
+    pub fn getOptionBool(self: *Parser, name: []const u8) !?bool {
+        if (self.options.get(name)) |opt| {
+            if (opt.typ != .bool) return error.InvalidType;
+            const val = std.mem.trim(u8, opt.value, " \t\n\r");
+            if (std.ascii.eqlIgnoreCase(val, "true") or std.ascii.eqlIgnoreCase(val, "yes") or std.ascii.eqlIgnoreCase(val, "1"))
+                return true;
+            if (std.ascii.eqlIgnoreCase(val, "false") or std.ascii.eqlIgnoreCase(val, "no") or std.ascii.eqlIgnoreCase(val, "0"))
+                return false;
+            return error.InvalidValue;
+        }
+        return null;
+    }
+    test "getOptionBool works for bool options" {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        const allocator = arena.allocator();
+        var args = [_][:0]const u8{
+            std.mem.sliceTo("--flag", 0),
+            std.mem.sliceTo("true", 0),
+            std.mem.sliceTo("--flag2", 0),
+            std.mem.sliceTo("no", 0),
+        };
+        var parser = Parser.init(allocator, args[0..]);
+        try parser.addOption("--flag", null, "false", "A bool flag");
+        parser.options.getPtr("--flag").?.typ = .bool;
+        try parser.addOption("--flag2", null, "yes", "Another bool flag");
+        parser.options.getPtr("--flag2").?.typ = .bool;
+        try parser.parse();
+        try std.testing.expectEqual(@as(?bool, true), try parser.getOptionBool("--flag"));
+        try std.testing.expectEqual(@as(?bool, false), try parser.getOptionBool("--flag2"));
+    }
     /// Append an error message and optional argument to the errors list.
     fn appendError(self: *Parser, msg: []const u8, arg: ?[]const u8) !void {
         try self.errors.append(self.allocator, msg);
