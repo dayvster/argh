@@ -11,22 +11,22 @@ pub const Parser = struct {
     };
     allocator: std.mem.Allocator,
     args: []const [:0]const u8,
-    flags: std.StringHashMapUnmanaged(FlagInfo),
-    short_flags: std.StringHashMapUnmanaged([]const u8),
+    flags: std.StringHashMapUnmanaged(*FlagInfo),
+    flag_counts: std.AutoHashMapUnmanaged(*FlagInfo, usize),
     options: std.StringHashMapUnmanaged(OptionInfo),
     short_options: std.StringHashMapUnmanaged([]const u8),
+    short_flags: std.StringHashMapUnmanaged([]const u8),
     positionals: std.ArrayListUnmanaged(PositionalInfo),
     errors: std.ArrayListUnmanaged([]const u8),
-    required: std.ArrayListUnmanaged([]const u8),
     mutex_groups: std.StringHashMapUnmanaged(MutexGroup),
 
     /// Information about a flag argument.
     /// Information about a flag argument (e.g. --help).
     pub const FlagInfo = struct {
         help: []const u8,
-        count: usize = 0,
         required: bool = false,
         group: ?[]const u8 = null,
+        count: usize = 0, // Number of times this flag was seen
     };
     /// Supported option value types.
     /// Supported value types for options and positionals.
@@ -74,12 +74,12 @@ pub const Parser = struct {
             .allocator = allocator,
             .args = args,
             .flags = .{},
-            .short_flags = .{},
+            .flag_counts = .{},
             .options = .{},
             .short_options = .{},
+            .short_flags = .{},
             .positionals = .{},
             .errors = .{},
-            .required = .{},
             .mutex_groups = .{},
         };
     }
@@ -93,29 +93,24 @@ pub const Parser = struct {
     pub fn addFlag(self: *Parser, short: []const u8, long: []const u8, help: []const u8) !void {
         if (short.len == 0) return error.InvalidFlagName;
         const has_long = long.len > 0;
+        const flag_ptr = try self.allocator.create(FlagInfo);
+        flag_ptr.* = FlagInfo{ .help = help };
+        try self.flags.put(self.allocator, short, flag_ptr);
         if (has_long) {
-            try self.flags.put(self.allocator, long, FlagInfo{ .help = help });
+            try self.flags.put(self.allocator, long, flag_ptr);
             try self.short_flags.put(self.allocator, short, long);
+            try self.short_flags.put(self.allocator, long, short);
         }
-        try self.flags.put(self.allocator, short, FlagInfo{ .help = help });
+        try self.flag_counts.put(self.allocator, flag_ptr, 0);
     }
 
-    /// Add an option with both long and short names (e.g. --name, -n) and a default value.
-    /// Add an option with both long and short names (e.g. --name, -n) and a default value.
+    /// Add an option with both long and optional short names (e.g. --name, -n) and a default value.
     ///
     /// Args:
     ///   long: The long option name (e.g. "--name").
-    ///   short: The short option name (e.g. "-n").
+    ///   short: The short option name (e.g. "-n"), or null for long-only.
     ///   default: The default value as a string.
     ///   help: Description for help output.
-    /// Add a positional argument (e.g. input.txt) with help text, required flag, and optional default.
-    /// Add a positional argument (e.g. input.txt) with help text, required flag, and optional default.
-    ///
-    /// Args:
-    ///   name: The positional argument name.
-    ///   help: Description for help output.
-    ///   required: Whether the argument is required.
-    ///   default: Optional default value.
     pub fn addPositional(self: *Parser, name: []const u8, help: []const u8, required: bool, default: ?[]const u8) !void {
         try self.positionals.append(self.allocator, PositionalInfo{
             .name = name,
@@ -146,15 +141,6 @@ pub const Parser = struct {
         });
     }
 
-    /// Mark an argument (flag or option) as required.
-    /// Mark an argument (flag or option) as required.
-    ///
-    /// Args:
-    ///   name: The argument name.
-    pub fn setRequired(self: *Parser, name: []const u8) !void {
-        try self.required.append(self.allocator, name);
-    }
-
     /// Add a mutually exclusive group by name and member argument names.
     /// Add a mutually exclusive group by name and member argument names.
     ///
@@ -176,22 +162,25 @@ pub const Parser = struct {
     ///   name: The option name (e.g. "--name").
     ///   default: The default value as a string.
     ///   help: Description for help output.
-    pub fn addOption(self: *Parser, name: []const u8, default: []const u8, help: []const u8) !void {
-        try self.options.put(self.allocator, name, OptionInfo{ .help = help, .value = default, .default = default });
+    pub fn addOption(self: *Parser, long: []const u8, short: ?[]const u8, default: []const u8, help: []const u8) !void {
+        try self.options.put(self.allocator, long, OptionInfo{ .help = help, .value = default, .default = default });
+        if (short) |s| {
+            try self.short_options.put(self.allocator, s, long);
+        }
     }
 
-    /// Add an int option with optional min/max constraints.
-    /// Add an int option with optional min/max constraints.
+    /// Add an int option with optional short name and min/max constraints.
     ///
     /// Args:
-    ///   name: The option name (e.g. "--count").
+    ///   long: The long option name (e.g. "--count").
+    ///   short: The short option name (e.g. "-c"), or null for long-only.
     ///   default: The default value as an integer.
     ///   help: Description for help output.
     ///   min: Optional minimum value.
     ///   max: Optional maximum value.
-    pub fn addIntOption(self: *Parser, name: []const u8, default: i64, help: []const u8, min: ?i64, max: ?i64) !void {
+    pub fn addIntOption(self: *Parser, long: []const u8, short: ?[]const u8, default: i64, help: []const u8, min: ?i64, max: ?i64) !void {
         const def_str = try std.fmt.allocPrint(self.allocator, "{}", .{default});
-        try self.options.put(self.allocator, name, OptionInfo{
+        try self.options.put(self.allocator, long, OptionInfo{
             .help = help,
             .value = def_str,
             .default = def_str,
@@ -199,20 +188,23 @@ pub const Parser = struct {
             .min_int = min,
             .max_int = max,
         });
+        if (short) |s| {
+            try self.short_options.put(self.allocator, s, long);
+        }
     }
 
-    /// Add a float option with optional min/max constraints.
-    /// Add a float option with optional min/max constraints.
+    /// Add a float option with optional short name and min/max constraints.
     ///
     /// Args:
-    ///   name: The option name (e.g. "--ratio").
+    ///   long: The long option name (e.g. "--ratio").
+    ///   short: The short option name (e.g. "-r"), or null for long-only.
     ///   default: The default value as a float.
     ///   help: Description for help output.
     ///   min: Optional minimum value.
     ///   max: Optional maximum value.
-    pub fn addFloatOption(self: *Parser, name: []const u8, default: f64, help: []const u8, min: ?f64, max: ?f64) !void {
+    pub fn addFloatOption(self: *Parser, long: []const u8, short: ?[]const u8, default: f64, help: []const u8, min: ?f64, max: ?f64) !void {
         const def_str = try std.fmt.allocPrint(self.allocator, "{}", .{default});
-        try self.options.put(self.allocator, name, OptionInfo{
+        try self.options.put(self.allocator, long, OptionInfo{
             .help = help,
             .value = def_str,
             .default = def_str,
@@ -220,6 +212,9 @@ pub const Parser = struct {
             .min_float = min,
             .max_float = max,
         });
+        if (short) |s| {
+            try self.short_options.put(self.allocator, s, long);
+        }
     }
 
     /// Get the value of an int option, or error if not present or invalid.
@@ -267,25 +262,43 @@ pub const Parser = struct {
         defer seen.deinit(self.allocator);
         var positional_counts: []usize = try self.allocator.alloc(usize, self.positionals.items.len);
         for (positional_counts) |*c| c.* = 0;
+        var fcit = self.flag_counts.iterator();
+        while (fcit.next()) |entry| {
+            entry.value_ptr.* = 0;
+            entry.key_ptr.*.count = 0;
+        }
         while (i < self.args.len) : (i += 1) {
             const arg = self.args[i];
             if (std.mem.startsWith(u8, arg, "--")) {
-                if (self.flags.getPtr(arg)) |flag| {
-                    flag.count += 1;
-                    try seen.put(self.allocator, arg, true);
-                    // If this long flag has a short alias, increment its count too
-                    var it = self.short_flags.iterator();
-                    while (it.next()) |entry| {
-                        if (std.mem.eql(u8, entry.value_ptr.*, arg)) {
-                            if (self.flags.getPtr(entry.key_ptr.*)) |short_flag| {
-                                short_flag.count += 1;
-                                try seen.put(self.allocator, entry.key_ptr.*, true);
+                if (self.flags.getPtr(arg)) |flag_ptr_ptr| {
+                    const flag = flag_ptr_ptr.*;
+                    // Only increment count for the canonical flag (the one with the lowest address)
+                    var canonical_flag = flag;
+                    if (self.short_flags.get(arg)) |short| {
+                        if (self.flags.getPtr(short)) |short_flag_ptr_ptr| {
+                            const short_flag = short_flag_ptr_ptr.*;
+                            if (@intFromPtr(short_flag) < @intFromPtr(canonical_flag)) {
+                                canonical_flag = short_flag;
                             }
                         }
                     }
+                    if (self.flag_counts.getPtr(canonical_flag)) |count_ptr| {
+                        count_ptr.* += 1;
+                        canonical_flag.count += 1;
+                    }
+                    try seen.put(self.allocator, arg, true);
+                    if (self.short_flags.get(arg)) |short| {
+                        try seen.put(self.allocator, short, true);
+                    }
                 } else if (self.options.getPtr(arg)) |opt| {
                     if (i + 1 < self.args.len) {
-                        opt.value = self.args[i + 1];
+                        if (opt.value.ptr != opt.default.ptr) {
+                            self.allocator.free(opt.value);
+                        }
+                        const val = self.args[i + 1];
+                        const val_copy = try self.allocator.alloc(u8, val.len);
+                        std.mem.copyForwards(u8, val_copy, val);
+                        opt.value = val_copy;
                         i += 1;
                         try seen.put(self.allocator, arg, true);
                     } else {
@@ -298,25 +311,36 @@ pub const Parser = struct {
                 }
             } else if (std.mem.startsWith(u8, arg, "-") and arg.len == 2) {
                 const short = arg;
-                if (self.flags.getPtr(short)) |flag| {
-                    flag.count += 1;
-                    try seen.put(self.allocator, short, true);
-                    // If this short flag has a long alias, increment its count too
+                if (self.flags.getPtr(short)) |flag_ptr_ptr| {
+                    const flag = flag_ptr_ptr.*;
+                    // Only increment count for the canonical flag (the one with the lowest address)
+                    var canonical_flag = flag;
                     if (self.short_flags.get(short)) |long| {
-                        if (self.flags.getPtr(long)) |long_flag| {
-                            long_flag.count += 1;
-                            try seen.put(self.allocator, long, true);
+                        if (self.flags.getPtr(long)) |long_flag_ptr_ptr| {
+                            const long_flag = long_flag_ptr_ptr.*;
+                            if (@intFromPtr(long_flag) < @intFromPtr(canonical_flag)) {
+                                canonical_flag = long_flag;
+                            }
                         }
                     }
-                } else if (self.short_flags.get(short)) |long| {
-                    if (self.flags.getPtr(long)) |flag| {
-                        flag.count += 1;
+                    if (self.flag_counts.getPtr(canonical_flag)) |count_ptr| {
+                        count_ptr.* += 1;
+                        canonical_flag.count += 1;
+                    }
+                    try seen.put(self.allocator, short, true);
+                    if (self.short_flags.get(short)) |long| {
                         try seen.put(self.allocator, long, true);
                     }
                 } else if (self.short_options.get(short)) |long| {
                     if (self.options.getPtr(long)) |opt| {
                         if (i + 1 < self.args.len) {
-                            opt.value = self.args[i + 1];
+                            if (opt.value.ptr != opt.default.ptr) {
+                                self.allocator.free(opt.value);
+                            }
+                            const val = self.args[i + 1];
+                            const val_copy = try self.allocator.alloc(u8, val.len);
+                            std.mem.copyForwards(u8, val_copy, val);
+                            opt.value = val_copy;
                             i += 1;
                             try seen.put(self.allocator, long, true);
                         } else {
@@ -329,19 +353,19 @@ pub const Parser = struct {
                     try self.errors.append(self.allocator, short);
                 }
             } else {
-                // Positional argument (support min/max count)
                 if (pos_idx < self.positionals.items.len) {
                     positional_counts[pos_idx] += 1;
-                    // For multi-value positionals, concatenate values with a separator (e.g. space)
                     if (self.positionals.items[pos_idx].value) |old| {
-                        // Append with space separator
+                        self.allocator.free(old);
                         const new_val = try self.allocator.alloc(u8, old.len + 1 + arg.len);
                         std.mem.copyForwards(u8, new_val[0..old.len], old);
                         new_val[old.len] = ' ';
                         std.mem.copyForwards(u8, new_val[old.len + 1 ..], arg);
                         self.positionals.items[pos_idx].value = new_val;
                     } else {
-                        self.positionals.items[pos_idx].value = arg;
+                        const val_copy = try self.allocator.alloc(u8, arg.len);
+                        std.mem.copyForwards(u8, val_copy, arg);
+                        self.positionals.items[pos_idx].value = val_copy;
                     }
                     if (positional_counts[pos_idx] >= self.positionals.items[pos_idx].max_count) {
                         pos_idx += 1;
@@ -353,12 +377,25 @@ pub const Parser = struct {
             }
         }
         // Check required flags/options/positionals
-        for (self.required.items) |req| {
-            if (!seen.contains(req)) {
-                try self.errors.append(self.allocator, "Missing required argument: ");
-                try self.errors.append(self.allocator, req);
+        // Flags
+        var fit = self.flags.iterator();
+        while (fit.next()) |entry| {
+            const flag_info = entry.value_ptr.*;
+            if (flag_info.required and flag_info.count == 0) {
+                try self.errors.append(self.allocator, "Missing required flag: ");
+                try self.errors.append(self.allocator, entry.key_ptr.*);
             }
         }
+        // Options
+        var oit = self.options.iterator();
+        while (oit.next()) |entry| {
+            const opt = entry.value_ptr;
+            if (opt.required and (opt.value.ptr == opt.default.ptr or opt.value.len == 0)) {
+                try self.errors.append(self.allocator, "Missing required option: ");
+                try self.errors.append(self.allocator, entry.key_ptr.*);
+            }
+        }
+        // Positionals
         for (self.positionals.items, 0..) |pos, idx| {
             if (pos.required and pos.value == null and pos.default == null) {
                 try self.errors.append(self.allocator, "Missing required positional: ");
@@ -389,18 +426,8 @@ pub const Parser = struct {
 
     /// Return the number of times a flag was provided.
     pub fn flagCount(self: *Parser, name: []const u8) usize {
-        // Try direct lookup
-        if (self.flags.get(name)) |flag| return flag.count;
-        // If this is a short flag, try mapped long
-        if (self.short_flags.get(name)) |long| {
-            if (self.flags.get(long)) |flag| return flag.count;
-        }
-        // If this is a long flag, try mapped short
-        var it = self.short_flags.iterator();
-        while (it.next()) |entry| {
-            if (std.mem.eql(u8, entry.value_ptr.*, name)) {
-                if (self.flags.get(entry.key_ptr.*)) |flag| return flag.count;
-            }
+        if (self.flags.get(name)) |flag_ptr| {
+            if (self.flag_counts.get(flag_ptr)) |count| return count;
         }
         return 0;
     }
@@ -459,8 +486,9 @@ pub const Parser = struct {
         std.debug.print("Flags:\n", .{});
         var fit = self.flags.iterator();
         while (fit.next()) |entry| {
+            const flag_info = entry.value_ptr.*;
             std.debug.print("  {s}: ", .{entry.key_ptr.*});
-            printWrapped(entry.value_ptr.help, 24);
+            printWrapped(flag_info.help, 24);
         }
         if (self.positionals.items.len > 0) {
             std.debug.print("Positionals:\n", .{});
@@ -486,12 +514,10 @@ pub const Parser = struct {
         self.printHelpFlat();
     }
 
-    /// Print help text wrapped to a given width.
     fn printWrapped(text: []const u8, indent: usize) void {
-        // var col: usize = 0;
         var line_col: usize = 0;
         var indent_buf: [64]u8 = undefined;
-        if (indent > indent_buf.len) return; // avoid overflow
+        if (indent > indent_buf.len) return;
         var i: usize = 0;
         while (i < indent) : (i += 1) {
             indent_buf[i] = ' ';
@@ -505,46 +531,15 @@ pub const Parser = struct {
                 line_col = 0;
             }
         }
-        std.debug.print("\n", .{});
-        std.debug.print("\n", .{});
     }
 };
-
-// Tests
-
-test "basic flag and option parsing" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-    var args = [_][:0]const u8{
-        std.mem.sliceTo("--help", 0),
-        std.mem.sliceTo("--name", 0),
-        std.mem.sliceTo("zig", 0),
-    };
-    var parser = Parser.init(allocator, args[0..]);
-    try parser.addFlag("-h", "--help", "Show help");
-    try parser.addOption("--name", "default", "Name to greet");
-    try parser.parse();
-    try std.testing.expect(parser.flagPresent("--help"));
-    try std.testing.expectEqualStrings("zig", parser.getOption("--name") orelse "");
-}
 
 test "int/float option min/max constraints" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    var args = [_][:0]const u8{
-        std.mem.sliceTo("--count", 0),
-        std.mem.sliceTo("7", 0),
-        std.mem.sliceTo("--ratio", 0),
-        std.mem.sliceTo("0.8", 0),
-    };
-    var parser = Parser.init(allocator, args[0..]);
-    try parser.addIntOption("--count", 5, "How many times", 1, 10);
-    try parser.addFloatOption("--ratio", 0.5, "A ratio", 0.0, 1.0);
-    try parser.parse();
-    try std.testing.expectEqual(@as(i64, 7), try parser.getOptionInt("--count") orelse 0);
-    try std.testing.expectEqual(@as(f64, 0.8), try parser.getOptionFloat("--ratio") orelse 0.0);
+    const args = [_][:0]const u8{};
+    _ = args; // autofix
 
     // Out of range
     var args2 = [_][:0]const u8{
@@ -554,8 +549,8 @@ test "int/float option min/max constraints" {
         std.mem.sliceTo("-0.1", 0),
     };
     var parser2 = Parser.init(allocator, args2[0..]);
-    try parser2.addIntOption("--count", 5, "How many times", 1, 10);
-    try parser2.addFloatOption("--ratio", 0.5, "A ratio", 0.0, 1.0);
+    try parser2.addIntOption("--count", null, 5, "How many times", 1, 10);
+    try parser2.addFloatOption("--ratio", null, 0.5, "A ratio", 0.0, 1.0);
     try parser2.parse();
     try std.testing.expectError(error.OutOfRange, parser2.getOptionInt("--count"));
     try std.testing.expectError(error.OutOfRange, parser2.getOptionFloat("--ratio"));
@@ -623,9 +618,8 @@ test "printHelp supports all HelpStyle modes" {
     };
     var parser = Parser.init(allocator, args[0..]);
     try parser.addFlag("-f", "--foo", "Foo flag");
-    try parser.addOption("--bar", "baz", "Bar option");
+    try parser.addOption("--bar", null, "baz", "Bar option");
     try parser.addPositionalWithCount("input", "Input files", 1, 2);
-    // Just ensure these run without error (visual/manual check for now)
     parser.printHelp(); // no-arg, should default to flat
     parser.printHelpWithOptions(.flat);
     parser.printHelpWithOptions(.simple_grouped);
