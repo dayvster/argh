@@ -50,7 +50,10 @@ const argh_pkg = b.dependency("argh", .{
     .optimize = optimize,
 });
 
+
 // const exe = b.addExecutable(...); ...
+
+// make sure to place this after creating your executable
 exe.root_module.addImport("argh", argh_pkg.module("argh"));
 ```
 
