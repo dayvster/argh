@@ -411,14 +411,20 @@ pub const Parser = struct {
     ///
     /// Args:
     ///   style: The help formatting style to use.
-    pub fn printHelp(self: *Parser, style: HelpStyle) void {
+    /// Print help. If a style is provided, use it; otherwise default to flat.
+    /// Print help using the default style (flat).
+    pub fn printHelp(self: *Parser) void {
+        self.printHelpWithOptions(.flat);
+    }
+
+    /// Print help with options (currently just style, extensible for future options).
+    pub fn printHelpWithOptions(self: *Parser, style: HelpStyle) void {
         switch (style) {
             .flat => self.printHelpFlat(),
             .simple_grouped => self.printHelpSimpleGrouped(),
             .complex_grouped => self.printHelpComplexGrouped(),
         }
     }
-
     fn printHelpFlat(self: *Parser) void {
         std.debug.print("Usage: <program> [options] [flags]", .{});
         if (self.positionals.items.len > 0) {
@@ -452,9 +458,6 @@ pub const Parser = struct {
                 }
             }
         }
-        std.debug.print("\nExamples:\n", .{});
-        std.debug.print("  ./program --help\n", .{});
-        std.debug.print("  ./program --count 3 --ratio 0.7 input.txt\n", .{});
     }
 
     fn printHelpSimpleGrouped(self: *Parser) void {
@@ -607,7 +610,8 @@ test "printHelp supports all HelpStyle modes" {
     try parser.addOption("--bar", "baz", "Bar option");
     try parser.addPositionalWithCount("input", "Input files", 1, 2);
     // Just ensure these run without error (visual/manual check for now)
-    parser.printHelp(Parser.HelpStyle.flat);
-    parser.printHelp(Parser.HelpStyle.simple_grouped);
-    parser.printHelp(Parser.HelpStyle.complex_grouped);
+    parser.printHelp(); // no-arg, should default to flat
+    parser.printHelpWithOptions(.flat);
+    parser.printHelpWithOptions(.simple_grouped);
+    parser.printHelpWithOptions(.complex_grouped);
 }

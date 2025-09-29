@@ -14,7 +14,8 @@ A modern, minimal argument parser for Zig.
 - Required arguments
 - Mutually exclusive groups
 - Helpful error and help messages
-- Developer-selectable help formatting (flat/simple/complex grouping)
+- Configurable help formatting (flat/simple/complex grouping; defaults to flat)
+- Configurable help output style (defaults to `flat`, can be changed via `printHelp`)
 - Fully documented API with Zig doc comments
 
 ## Roadmap
@@ -78,11 +79,11 @@ pub fn main() !void {
 
   if (parser.errors.items.len > 0) {
     parser.printErrors();
-    parser.printHelp(argparse.Parser.HelpStyle.flat); // or .simple_grouped, .complex_grouped
+    parser.printHelp(); // prints help in flat style by default
     return;
   }
   if (parser.flagPresent("--help")) {
-    parser.printHelp(argparse.Parser.HelpStyle.flat);
+    parser.printHelp(); // prints help in flat style by default
     return;
   }
   const name = parser.getOption("--name") orelse "World";
@@ -112,9 +113,9 @@ pub fn main() !void {
   try parser.parse();
 
   if (parser.errors.items.len > 0) {
-    parser.printErrors();
-    parser.printHelp(argparse.Parser.HelpStyle.flat);
-    return;
+  parser.printErrors();
+  parser.printHelp(); // prints help in flat style by default
+  return;
   }
 
   const count = try parser.getOptionInt("--count") orelse 5;
@@ -137,6 +138,16 @@ pub fn main() !void {
   - `try parser.setRequired("--name");`
 - **Mutually Exclusive Groups:**
   - `try parser.addMutexGroup("group1", &[_][]const u8{ "--foo", "--bar" });`
+
+## Help Style
+
+By default, `parser.printHelp()` prints help in the flat style.
+To use a different style, use `printHelpWithOptions`:
+
+```zig
+parser.printHelpWithOptions(argparse.Parser.HelpStyle.simple_grouped);
+parser.printHelpWithOptions(argparse.Parser.HelpStyle.complex_grouped);
+```
 
 ## Advanced Features
 
