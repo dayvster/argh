@@ -10,16 +10,16 @@ pub fn main() !void {
 
     var parser = argparse.Parser.init(allocator, args);
     // Register short and long flags/options
-    try parser.addFlagWithShort("--help", "-h", "Show help message");
-    try parser.addFlagWithShort("--verbose", "-v", "Increase verbosity");
-    try parser.addOptionWithShort("--name", "-n", "World", "Name to greet");
-    try parser.addOptionWithShort("--mode", "-m", "default", "Mode to use");
+    try parser.addFlag("-h", "--help", "Show help message");
+    try parser.addFlag("-v", "--verbose", "Increase verbosity");
+    try parser.addOption("--name", "-n", "World", "Name to greet");
+    try parser.addOption("--mode", "-m", "default", "Mode to use");
     // Register positional argument (required)
     try parser.addPositional("input", "Input file", true, null);
     // Register mutually exclusive group
     try parser.addMutexGroup("mode_group", &[_][]const u8{ "--mode", "--verbose" });
     // Mark --name as required
-    try parser.setRequired("--name");
+    // The setRequired method does not exist. If --name should be required, set it in addOption or handle after parsing.
     try parser.parse();
 
     if (parser.errors.items.len > 0) {

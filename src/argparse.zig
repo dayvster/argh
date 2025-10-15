@@ -2,7 +2,130 @@ const std = @import("std");
 
 /// Argument parser for command-line interfaces.
 /// Main argument parser struct. Holds all argument definitions and parsing state.
+pub const FlagInfo = struct {
+    help: []const u8,
+    required: bool = false,
+    group: ?[]const u8 = null,
+    count: usize = 0,
+};
+
+pub const OptionType = enum { string, int, float, bool };
+
+pub const OptionInfo = struct {
+    help: []const u8,
+    value: []const u8,
+    default: []const u8,
+    required: bool = false,
+    typ: OptionType = .string,
+    group: ?[]const u8 = null,
+    min_int: ?i64 = null,
+    max_int: ?i64 = null,
+    min_float: ?f64 = null,
+    max_float: ?f64 = null,
+};
+
+pub const PositionalInfo = struct {
+    name: []const u8,
+    help: []const u8,
+    value: ?[]const u8 = null,
+    required: bool = false,
+    default: ?[]const u8 = null,
+    typ: OptionType = .string,
+    min_count: usize = 1,
+    max_count: usize = 1,
+};
+
+pub const MutexGroup = struct {
+    members: std.ArrayListUnmanaged([]const u8),
+};
+
 pub const Parser = struct {
+    /// Returns the subcommand name if present, or null.
+    pub fn getSubcommand(self: *Parser) ?[]const u8 {
+        if (self.args.len > 0) {
+            const first = self.args[0];
+            if (self.subcommands.contains(first)) {
+                return first;
+            }
+        }
+        return null;
+    }
+
+    /// If a subcommand is present, returns its parser, else null.
+    pub fn getSubcommandParser(self: *Parser) ?*Parser {
+        if (self.args.len > 0) {
+            const first = self.args[0];
+            if (self.subcommands.get(first)) |subparser| {
+                return subparser;
+            }
+        }
+        return null;
+    }
+
+    /// Parse, dispatching to subcommand parser if present.
+    pub fn parseWithSubcommand(self: *Parser) !?*Parser {
+        if (self.getSubcommandParser()) |subparser| {
+            subparser.args = self.args[1..];
+            try subparser.parse();
+            return subparser;
+        } else {
+            try self.parse();
+            return null;
+        }
+    }
+    test "subcommand parsing and dispatch works" {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        const allocator = arena.allocator();
+
+        var args = [_][:0]const u8{
+            std.mem.sliceTo("add", 0),
+            std.mem.sliceTo("--name", 0),
+            std.mem.sliceTo("foo", 0),
+        };
+        var main = Parser.init(allocator, args[0..]);
+        var add_args = [_][:0]const u8{};
+        var add_parser = Parser.init(allocator, add_args[0..]);
+        try add_parser.addOption("--name", null, "", "Name to add");
+        try main.subcommands.put(allocator, "add", &add_parser);
+        var remove_args = [_][:0]const u8{};
+        var remove_parser = Parser.init(allocator, remove_args[0..]);
+        try remove_parser.addOption("--id", null, "", "ID to remove");
+        try main.subcommands.put(allocator, "remove", &remove_parser);
+
+        const dispatched = try main.parseWithSubcommand();
+        try std.testing.expect(dispatched == &add_parser);
+        try std.testing.expectEqualStrings("foo", add_parser.options.get("--name").?.value);
+
+        var args2 = [_][:0]const u8{
+            std.mem.sliceTo("remove", 0),
+            std.mem.sliceTo("--id", 0),
+            std.mem.sliceTo("42", 0),
+        };
+        main.args = args2[0..];
+        const dispatched2 = try main.parseWithSubcommand();
+        try std.testing.expect(dispatched2 == &remove_parser);
+        try std.testing.expectEqualStrings("42", remove_parser.options.get("--id").?.value);
+
+        var args3 = [_][:0]const u8{
+            std.mem.sliceTo("--foo", 0),
+        };
+        main.args = args3[0..];
+        const dispatched3 = try main.parseWithSubcommand();
+        try std.testing.expect(dispatched3 == null);
+    }
+    allocator: std.mem.Allocator,
+    args: []const [:0]const u8,
+    flags: std.StringHashMapUnmanaged(*FlagInfo),
+    flag_counts: std.AutoHashMapUnmanaged(*FlagInfo, usize),
+    options: std.StringHashMapUnmanaged(OptionInfo),
+    short_options: std.StringHashMapUnmanaged([]const u8),
+    short_flags: std.StringHashMapUnmanaged([]const u8),
+    positionals: std.ArrayListUnmanaged(PositionalInfo),
+    errors: std.ArrayListUnmanaged([]const u8),
+    mutex_groups: std.StringHashMapUnmanaged(MutexGroup),
+    subcommands: std.StringHashMapUnmanaged(*Parser),
+
     /// Get the value of a bool option, or error if not present or invalid.
     pub fn getOptionBool(self: *Parser, name: []const u8) !?bool {
         if (self.options.get(name)) |opt| {
@@ -42,64 +165,10 @@ pub const Parser = struct {
             try self.errors.append(self.allocator, a);
         }
     }
-    /// Controls the style of help output for the argument parser.
     pub const HelpStyle = enum {
         flat,
         simple_grouped,
         complex_grouped,
-    };
-    allocator: std.mem.Allocator,
-    args: []const [:0]const u8,
-    flags: std.StringHashMapUnmanaged(*FlagInfo),
-    flag_counts: std.AutoHashMapUnmanaged(*FlagInfo, usize),
-    options: std.StringHashMapUnmanaged(OptionInfo),
-    short_options: std.StringHashMapUnmanaged([]const u8),
-    short_flags: std.StringHashMapUnmanaged([]const u8),
-    positionals: std.ArrayListUnmanaged(PositionalInfo),
-    errors: std.ArrayListUnmanaged([]const u8),
-    mutex_groups: std.StringHashMapUnmanaged(MutexGroup),
-
-    /// Information about a flag argument.
-    /// Information about a flag argument (e.g. --help).
-    pub const FlagInfo = struct {
-        help: []const u8,
-        required: bool = false,
-        group: ?[]const u8 = null,
-        count: usize = 0,
-    };
-    /// Supported option value types.
-    /// Supported value types for options and positionals.
-    pub const OptionType = enum { string, int, float, bool };
-    /// Information about an option argument.
-    /// Information about an option argument (e.g. --name=foo).
-    pub const OptionInfo = struct {
-        help: []const u8,
-        value: []const u8,
-        default: []const u8,
-        required: bool = false,
-        typ: OptionType = .string,
-        group: ?[]const u8 = null,
-        min_int: ?i64 = null,
-        max_int: ?i64 = null,
-        min_float: ?f64 = null,
-        max_float: ?f64 = null,
-    };
-    /// Information about a positional argument.
-    /// Information about a positional argument (e.g. input.txt).
-    pub const PositionalInfo = struct {
-        name: []const u8,
-        help: []const u8,
-        value: ?[]const u8 = null,
-        required: bool = false,
-        default: ?[]const u8 = null,
-        typ: OptionType = .string,
-        min_count: usize = 1,
-        max_count: usize = 1,
-    };
-    /// Group of mutually exclusive arguments.
-    /// Group of mutually exclusive arguments.
-    pub const MutexGroup = struct {
-        members: std.ArrayListUnmanaged([]const u8),
     };
 
     /// Initialize a new parser with allocator and argument list.
@@ -120,6 +189,7 @@ pub const Parser = struct {
             .positionals = .{},
             .errors = .{},
             .mutex_groups = .{},
+            .subcommands = .{},
         };
     }
 
@@ -504,73 +574,90 @@ pub const Parser = struct {
         }
         std.debug.print("\n\n", .{});
 
-        // Options
-        std.debug.print("Options:\n", .{});
-        var max_opt_len: usize = 0;
+        // Options and Flags (GNU style)
         var it = self.options.iterator();
         while (it.next()) |entry| {
-            const opt_len = entry.key_ptr.len;
-            if (opt_len > max_opt_len) max_opt_len = opt_len;
-        }
-        it = self.options.iterator();
-        while (it.next()) |entry| {
-            const name = entry.key_ptr.*;
             const opt = entry.value_ptr;
-            std.debug.print("\t{s}", .{name});
-            // pad with tabs to align columns
-            var pad: usize = 1;
-            if (max_opt_len > name.len) {
-                pad = ((max_opt_len - name.len) / 8) + 1;
+            var line_buf: [128]u8 = undefined;
+            var line: []u8 = line_buf[0..0];
+            // Find matching short option
+            var short_name: ?[]const u8 = null;
+            var short_it = self.short_options.iterator();
+            while (short_it.next()) |short_entry| {
+                if (std.mem.eql(u8, short_entry.value_ptr.*, entry.key_ptr.*)) {
+                    short_name = short_entry.key_ptr.*;
+                    break;
+                }
             }
-            var i: usize = 0;
-            while (i < pad) : (i += 1) std.debug.print("\t", .{});
-            std.debug.print("{s}", .{opt.help});
+            if (short_name) |s| {
+                const res = std.fmt.bufPrint(&line_buf, "  {s}, {s}", .{ s, entry.key_ptr.* }) catch unreachable;
+                line = line_buf[0..res.len];
+            } else {
+                const res = std.fmt.bufPrint(&line_buf, "      {s}", .{entry.key_ptr.*}) catch unreachable;
+                line = line_buf[0..res.len];
+            }
+            // Pad to column 24
+            var pad_len = line.len;
+            while (pad_len < 22 and pad_len < line_buf.len) : (pad_len += 1) {
+                line_buf[pad_len] = ' ';
+            }
+            line = line_buf[0..pad_len];
+            std.debug.print("{s}  {s}", .{ line, opt.help });
             if (opt.default.len > 0) {
-                std.debug.print("\t(default: {s})", .{opt.default});
+                std.debug.print(" (default: {s})", .{opt.default});
             }
             std.debug.print("\n", .{});
         }
-
-        // Flags
-        std.debug.print("Flags:\n", .{});
-        var max_flag_len: usize = 0;
         var fit = self.flags.iterator();
         while (fit.next()) |entry| {
-            const flag_len = entry.key_ptr.len;
-            if (flag_len > max_flag_len) max_flag_len = flag_len;
-        }
-        fit = self.flags.iterator();
-        while (fit.next()) |entry| {
-            const name = entry.key_ptr.*;
             const flag = entry.value_ptr.*;
-            std.debug.print("\t{s}", .{name});
-            var pad: usize = 1;
-            if (max_flag_len > name.len) {
-                pad = ((max_flag_len - name.len) / 8) + 1;
+            var line_buf: [128]u8 = undefined;
+            var line: []u8 = line_buf[0..0];
+            // Find matching long flag
+            var long_name: ?[]const u8 = null;
+            var long_it = self.flags.iterator();
+            while (long_it.next()) |long_entry| {
+                const key = long_entry.key_ptr.*;
+                if (key.len > 2 and key[0] == '-' and key[1] == '-') {
+                    if (std.mem.eql(u8, long_entry.value_ptr.*.help, flag.help)) {
+                        long_name = key;
+                        break;
+                    }
+                }
             }
-            var i: usize = 0;
-            while (i < pad) : (i += 1) std.debug.print("\t", .{});
-            std.debug.print("{s}\n", .{flag.help});
+            if (long_name) |l| {
+                const key = entry.key_ptr.*;
+                if (key.len == 2 and key[0] == '-') {
+                    const res = std.fmt.bufPrint(&line_buf, "  {s}, {s}", .{ key, l }) catch unreachable;
+                    line = line_buf[0..res.len];
+                } else {
+                    const res = std.fmt.bufPrint(&line_buf, "      {s}", .{key}) catch unreachable;
+                    line = line_buf[0..res.len];
+                }
+            } else {
+                const key = entry.key_ptr.*;
+                const res = std.fmt.bufPrint(&line_buf, "      {s}", .{key}) catch unreachable;
+                line = line_buf[0..res.len];
+            }
+            // Pad to column 24
+            var pad_len = line.len;
+            while (pad_len < 22 and pad_len < line_buf.len) : (pad_len += 1) {
+                line_buf[pad_len] = ' ';
+            }
+            line = line_buf[0..pad_len];
+            std.debug.print("{s}  {s}\n", .{ line, flag.help });
         }
 
-        // Positionals
+        // Positionals (keep simple for now)
         if (self.positionals.items.len > 0) {
             std.debug.print("Positionals:\n", .{});
-            var max_pos_len: usize = 0;
             for (self.positionals.items) |pos| {
-                if (pos.name.len > max_pos_len) max_pos_len = pos.name.len;
-            }
-            for (self.positionals.items) |pos| {
-                std.debug.print("\t{s}", .{pos.name});
+                std.debug.print("  {s}", .{pos.name});
                 var pad: usize = 1;
-                if (max_pos_len > pos.name.len) {
-                    pad = ((max_pos_len - pos.name.len) / 8) + 1;
-                }
-                var i: usize = 0;
-                while (i < pad) : (i += 1) std.debug.print("\t", .{});
-                std.debug.print("{s}", .{pos.help});
+                while (pad < 20 - pos.name.len) : (pad += 1) std.debug.print(" ", .{});
+                std.debug.print("  {s}", .{pos.help});
                 if (pos.min_count != 1 or pos.max_count != 1) {
-                    std.debug.print("\t(min: {d}, max: {d})", .{ pos.min_count, pos.max_count });
+                    std.debug.print(" (min: {d}, max: {d})", .{ pos.min_count, pos.max_count });
                 }
                 std.debug.print("\n", .{});
             }
@@ -721,7 +808,6 @@ test "int/float option min/max constraints" {
     const allocator = arena.allocator();
     const args = [_][:0]const u8{};
     _ = args; // autofix
-
     // Out of range
     var args2 = [_][:0]const u8{
         std.mem.sliceTo("--count", 0),
@@ -749,21 +835,14 @@ test "positional min/max count constraints" {
     var parser = Parser.init(allocator, args[0..]);
     try parser.addPositionalWithCount("input", "Input files", 1, 3);
     try parser.parse();
-    // Should succeed with 3 positionals
-    if (parser.errors.items.len != 0) {
-        parser.printErrors();
-    }
     try std.testing.expect(parser.errors.items.len == 0);
-
     var args2 = [_][:0]const u8{
         std.mem.sliceTo("file1", 0),
     };
     var parser2 = Parser.init(allocator, args2[0..]);
     try parser2.addPositionalWithCount("input", "Input files", 2, 3);
     try parser2.parse();
-    // Should error: too few
     try std.testing.expect(parser2.errors.items.len > 0);
-
     var args3 = [_][:0]const u8{
         std.mem.sliceTo("file1", 0),
         std.mem.sliceTo("file2", 0),
@@ -773,7 +852,6 @@ test "positional min/max count constraints" {
     var parser3 = Parser.init(allocator, args3[0..]);
     try parser3.addPositionalWithCount("input", "Input files", 2, 3);
     try parser3.parse();
-    // Should error: too many
     try std.testing.expect(parser3.errors.items.len > 0);
 }
 
@@ -784,9 +862,8 @@ test "help formatting includes groups and examples" {
     var args = [_][:0]const u8{};
     var parser = Parser.init(allocator, args[0..]);
     try parser.addFlag("-h", "--help", "Show help message");
-    // Option API should be unified if needed; only addFlag is supported now.
     try parser.addPositionalWithCount("input", "Input files", 1, 2);
-    parser.printHelp(); // visually inspect output for grouping and examples
+    parser.printHelp();
 }
 
 test "printHelp supports all HelpStyle modes" {
@@ -801,7 +878,7 @@ test "printHelp supports all HelpStyle modes" {
     try parser.addFlag("-f", "--foo", "Foo flag");
     try parser.addOption("--bar", null, "baz", "Bar option");
     try parser.addPositionalWithCount("input", "Input files", 1, 2);
-    parser.printHelp(); // no-arg, should default to flat
+    parser.printHelp();
     parser.printHelpWithOptions(.flat);
     parser.printHelpWithOptions(.simple_grouped);
     parser.printHelpWithOptions(.complex_grouped);

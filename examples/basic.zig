@@ -9,8 +9,8 @@ pub fn main() !void {
     defer std.process.argsFree(allocator, args);
 
     var parser = argparse.Parser.init(allocator, args);
-    try parser.addFlag("--help", "Show this help message");
-    try parser.addOption("--name", "World", "Name to greet");
+    try parser.addFlag("-h", "--help", "Show this help message");
+    try parser.addOption("--name", null, "World", "Name to greet");
     try parser.parse();
 
     if (parser.flagPresent("--help")) {

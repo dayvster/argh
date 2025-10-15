@@ -14,8 +14,9 @@ This document tracks planned and potential features for future releases of argh.
 - [x] Type-safe bool option access (getOptionBool)
 - [x] Memory safety (no leaks, all allocations freed)
 - [x] Full API doc comments
-- [ ] Environment variable fallback for options
-- [ ] Subcommand support (e.g. `git commit`)
+- [x] ~~Environment variable fallback for options~~
+	- Won't implement: use my dotenv parser for Zig: https://github.com/dayvster/zdotenv
+- [x] Subcommand support (e.g. `git commit`)
 - [ ] Argument deprecation warnings
 - [ ] Config file support (e.g. JSON, TOML)
 - [ ] Hidden arguments (not shown in help)
