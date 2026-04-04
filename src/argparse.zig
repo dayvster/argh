@@ -6,6 +6,7 @@ pub const FlagInfo = struct {
     help: []const u8,
     required: bool = false,
     group: ?[]const u8 = null,
+    hidden: bool = false,
     count: usize = 0,
 };
 
@@ -18,6 +19,7 @@ pub const OptionInfo = struct {
     required: bool = false,
     typ: OptionType = .string,
     group: ?[]const u8 = null,
+    hidden: bool = false,
     min_int: ?i64 = null,
     max_int: ?i64 = null,
     min_float: ?f64 = null,
@@ -31,6 +33,7 @@ pub const PositionalInfo = struct {
     required: bool = false,
     default: ?[]const u8 = null,
     typ: OptionType = .string,
+    hidden: bool = false,
     min_count: usize = 1,
     max_count: usize = 1,
 };
@@ -200,10 +203,20 @@ pub const Parser = struct {
     ///   long: The long flag name (e.g. "--help"), or "" for short-only.
     ///   help: Description for help output.
     pub fn addFlag(self: *Parser, short: []const u8, long: []const u8, help: []const u8) !void {
+        try self.addFlagWithOptions(short, long, help, false);
+    }
+
+    /// Add a hidden flag (not shown in help output).
+    pub fn addHiddenFlag(self: *Parser, short: []const u8, long: []const u8, help: []const u8) !void {
+        try self.addFlagWithOptions(short, long, help, true);
+    }
+
+    /// Add a flag with options for hidden status.
+    fn addFlagWithOptions(self: *Parser, short: []const u8, long: []const u8, help: []const u8, hidden: bool) !void {
         if (short.len == 0) return error.InvalidFlagName;
         const has_long = long.len > 0;
         const flag_ptr = try self.allocator.create(FlagInfo);
-        flag_ptr.* = FlagInfo{ .help = help };
+        flag_ptr.* = FlagInfo{ .help = help, .hidden = hidden };
         try self.flags.put(self.allocator, short, flag_ptr);
         if (has_long) {
             try self.flags.put(self.allocator, long, flag_ptr);
@@ -240,11 +253,21 @@ pub const Parser = struct {
     ///   min_count: Minimum number of values required.
     ///   max_count: Maximum number of values allowed.
     pub fn addPositionalWithCount(self: *Parser, name: []const u8, help: []const u8, min_count: usize, max_count: usize) !void {
+        try self.addPositionalWithCountAndHidden(name, help, min_count, max_count, false);
+    }
+
+    /// Add a hidden positional argument (not shown in help output).
+    pub fn addHiddenPositionalWithCount(self: *Parser, name: []const u8, help: []const u8, min_count: usize, max_count: usize) !void {
+        try self.addPositionalWithCountAndHidden(name, help, min_count, max_count, true);
+    }
+
+    fn addPositionalWithCountAndHidden(self: *Parser, name: []const u8, help: []const u8, min_count: usize, max_count: usize, hidden: bool) !void {
         try self.positionals.append(self.allocator, PositionalInfo{
             .name = name,
             .help = help,
             .required = min_count > 0,
             .default = null,
+            .hidden = hidden,
             .min_count = min_count,
             .max_count = max_count,
         });
@@ -271,7 +294,16 @@ pub const Parser = struct {
     ///   default: The default value as a string.
     ///   help: Description for help output.
     pub fn addOption(self: *Parser, long: []const u8, short: ?[]const u8, default: []const u8, help: []const u8) !void {
-        try self.options.put(self.allocator, long, OptionInfo{ .help = help, .value = default, .default = default });
+        try self.addOptionWithOptions(long, short, default, help, false);
+    }
+
+    /// Add a hidden option (not shown in help output).
+    pub fn addHiddenOption(self: *Parser, long: []const u8, short: ?[]const u8, default: []const u8, help: []const u8) !void {
+        try self.addOptionWithOptions(long, short, default, help, true);
+    }
+
+    fn addOptionWithOptions(self: *Parser, long: []const u8, short: ?[]const u8, default: []const u8, help: []const u8, hidden: bool) !void {
+        try self.options.put(self.allocator, long, OptionInfo{ .help = help, .value = default, .default = default, .hidden = hidden });
         if (short) |s| {
             try self.short_options.put(self.allocator, s, long);
         }
@@ -286,6 +318,15 @@ pub const Parser = struct {
     ///   min: Optional minimum value.
     ///   max: Optional maximum value.
     pub fn addIntOption(self: *Parser, long: []const u8, short: ?[]const u8, default: i64, help: []const u8, min: ?i64, max: ?i64) !void {
+        try self.addIntOptionWithOptions(long, short, default, help, min, max, false);
+    }
+
+    /// Add a hidden int option.
+    pub fn addHiddenIntOption(self: *Parser, long: []const u8, short: ?[]const u8, default: i64, help: []const u8, min: ?i64, max: ?i64) !void {
+        try self.addIntOptionWithOptions(long, short, default, help, min, max, true);
+    }
+
+    fn addIntOptionWithOptions(self: *Parser, long: []const u8, short: ?[]const u8, default: i64, help: []const u8, min: ?i64, max: ?i64, hidden: bool) !void {
         const def_str = try std.fmt.allocPrint(self.allocator, "{}", .{default});
         try self.options.put(self.allocator, long, OptionInfo{
             .help = help,
@@ -294,6 +335,7 @@ pub const Parser = struct {
             .typ = .int,
             .min_int = min,
             .max_int = max,
+            .hidden = hidden,
         });
         if (short) |s| {
             try self.short_options.put(self.allocator, s, long);
@@ -310,6 +352,15 @@ pub const Parser = struct {
     ///   min: Optional minimum value.
     ///   max: Optional maximum value.
     pub fn addFloatOption(self: *Parser, long: []const u8, short: ?[]const u8, default: f64, help: []const u8, min: ?f64, max: ?f64) !void {
+        try self.addFloatOptionWithOptions(long, short, default, help, min, max, false);
+    }
+
+    /// Add a hidden float option.
+    pub fn addHiddenFloatOption(self: *Parser, long: []const u8, short: ?[]const u8, default: f64, help: []const u8, min: ?f64, max: ?f64) !void {
+        try self.addFloatOptionWithOptions(long, short, default, help, min, max, true);
+    }
+
+    fn addFloatOptionWithOptions(self: *Parser, long: []const u8, short: ?[]const u8, default: f64, help: []const u8, min: ?f64, max: ?f64, hidden: bool) !void {
         const def_str = try std.fmt.allocPrint(self.allocator, "{}", .{default});
         try self.options.put(self.allocator, long, OptionInfo{
             .help = help,
@@ -318,6 +369,7 @@ pub const Parser = struct {
             .typ = .float,
             .min_float = min,
             .max_float = max,
+            .hidden = hidden,
         });
         if (short) |s| {
             try self.short_options.put(self.allocator, s, long);
@@ -569,6 +621,7 @@ pub const Parser = struct {
         std.debug.print("Usage: <program> [options] [flags]", .{});
         if (self.positionals.items.len > 0) {
             for (self.positionals.items) |pos| {
+                if (pos.hidden) continue;
                 std.debug.print(" [{s}]", .{pos.name});
             }
         }
@@ -577,6 +630,7 @@ pub const Parser = struct {
         // Options and Flags (GNU style)
         var it = self.options.iterator();
         while (it.next()) |entry| {
+            if (entry.value_ptr.hidden) continue;
             const opt = entry.value_ptr;
             var line_buf: [128]u8 = undefined;
             var line: []u8 = line_buf[0..0];
@@ -610,6 +664,7 @@ pub const Parser = struct {
         }
         var fit = self.flags.iterator();
         while (fit.next()) |entry| {
+            if (entry.value_ptr.*.hidden) continue;
             const flag = entry.value_ptr.*;
             var line_buf: [128]u8 = undefined;
             var line: []u8 = line_buf[0..0];
@@ -652,6 +707,7 @@ pub const Parser = struct {
         if (self.positionals.items.len > 0) {
             std.debug.print("Positionals:\n", .{});
             for (self.positionals.items) |pos| {
+                if (pos.hidden) continue;
                 std.debug.print("  {s}", .{pos.name});
                 var pad: usize = 1;
                 while (pad < 20 - pos.name.len) : (pad += 1) std.debug.print(" ", .{});
@@ -673,6 +729,7 @@ pub const Parser = struct {
         // Collect groups for options
         var opt_it = self.options.iterator();
         while (opt_it.next()) |entry| {
+            if (entry.value_ptr.hidden) continue;
             const group = entry.value_ptr.group orelse "(ungrouped)";
             if (!group_map.contains(group)) {
                 group_map.put(self.allocator, group, {}) catch {};
@@ -687,6 +744,7 @@ pub const Parser = struct {
         defer flag_groups.deinit(self.allocator);
         var flag_it = self.flags.iterator();
         while (flag_it.next()) |entry| {
+            if (entry.value_ptr.*.hidden) continue;
             const group = entry.value_ptr.*.group orelse "(ungrouped)";
             if (!flag_groups.contains(group)) {
                 flag_groups.put(self.allocator, group, std.ArrayListUnmanaged([]const u8){}) catch {};
@@ -698,6 +756,7 @@ pub const Parser = struct {
         std.debug.print("Usage: <program> [options] [flags]", .{});
         if (self.positionals.items.len > 0) {
             for (self.positionals.items) |pos| {
+                if (pos.hidden) continue;
                 std.debug.print(" [{s}]", .{pos.name});
             }
         }
@@ -714,6 +773,7 @@ pub const Parser = struct {
             }
             for (entry.value_ptr.items) |opt_name| {
                 if (self.options.get(opt_name)) |opt| {
+                    if (opt.hidden) continue;
                     std.debug.print("\t\t{s}", .{opt_name});
                     var pad: usize = 1;
                     if (max_opt_len > opt_name.len) {
@@ -741,6 +801,7 @@ pub const Parser = struct {
             }
             for (entry.value_ptr.items) |flag_name| {
                 if (self.flags.get(flag_name)) |flag_ptr| {
+                    if (flag_ptr.*.hidden) continue;
                     const flag = flag_ptr.*;
                     std.debug.print("\t\t{s}", .{flag_name});
                     var pad: usize = 1;
@@ -758,9 +819,11 @@ pub const Parser = struct {
             std.debug.print("Positionals:\n", .{});
             var max_pos_len: usize = 0;
             for (self.positionals.items) |pos| {
+                if (pos.hidden) continue;
                 if (pos.name.len > max_pos_len) max_pos_len = pos.name.len;
             }
             for (self.positionals.items) |pos| {
+                if (pos.hidden) continue;
                 std.debug.print("\t{s}", .{pos.name});
                 var pad: usize = 1;
                 if (max_pos_len > pos.name.len) {
@@ -924,4 +987,72 @@ test "flagPresent and flagCount work for short, long, and short-only flags" {
     try std.testing.expectEqual(@as(usize, 1), parser.flagCount("-c"));
     try std.testing.expectEqual(@as(usize, 1), parser.flagCount("--gamma"));
     try std.testing.expectEqual(@as(usize, 0), parser.flagCount("--delta"));
+}
+
+test "hidden flags are parsed but not shown in help" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var args = [_][:0]const u8{
+        std.mem.sliceTo("--hidden-flag", 0),
+        std.mem.sliceTo("--visible-flag", 0),
+    };
+    var parser = Parser.init(allocator, args[0..]);
+    try parser.addHiddenFlag("-s", "--hidden-flag", "This should be hidden");
+    try parser.addFlag("-v", "--visible-flag", "This should be visible");
+    try parser.parse();
+    try std.testing.expect(parser.flagPresent("--hidden-flag"));
+    try std.testing.expect(parser.flagPresent("--visible-flag"));
+}
+
+test "hidden options are parsed but not shown in help" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var args = [_][:0]const u8{
+        std.mem.sliceTo("--hidden-opt", 0),
+        std.mem.sliceTo("secret", 0),
+        std.mem.sliceTo("--visible-opt", 0),
+        std.mem.sliceTo("visible", 0),
+    };
+    var parser = Parser.init(allocator, args[0..]);
+    try parser.addHiddenOption("--hidden-opt", null, "", "Hidden option");
+    try parser.addOption("--visible-opt", null, "", "Visible option");
+    try parser.parse();
+    try std.testing.expectEqualStrings("secret", parser.getOption("--hidden-opt").?);
+    try std.testing.expectEqualStrings("visible", parser.getOption("--visible-opt").?);
+}
+
+test "hidden positional arguments are parsed but not shown in help" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var args = [_][:0]const u8{
+        std.mem.sliceTo("visible", 0),
+        std.mem.sliceTo("hidden", 0),
+    };
+    var parser = Parser.init(allocator, args[0..]);
+    try parser.addPositionalWithCount("visible", "Visible positional", 1, 1);
+    try parser.addHiddenPositionalWithCount("hidden", "Hidden positional", 1, 1);
+    try parser.parse();
+    try std.testing.expect(parser.positionals.items[0].value != null);
+    try std.testing.expect(parser.positionals.items[1].value != null);
+}
+
+test "hidden int and float options work" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var args = [_][:0]const u8{
+        std.mem.sliceTo("--hidden-int", 0),
+        std.mem.sliceTo("42", 0),
+        std.mem.sliceTo("--hidden-float", 0),
+        std.mem.sliceTo("3.14", 0),
+    };
+    var parser = Parser.init(allocator, args[0..]);
+    try parser.addHiddenIntOption("--hidden-int", null, 0, "Hidden int", null, null);
+    try parser.addHiddenFloatOption("--hidden-float", null, 0.0, "Hidden float", null, null);
+    try parser.parse();
+    try std.testing.expectEqual(@as(?i64, 42), try parser.getOptionInt("--hidden-int"));
+    try std.testing.expectEqual(@as(?f64, 3.14), try parser.getOptionFloat("--hidden-float"));
 }

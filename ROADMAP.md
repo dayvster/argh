@@ -19,7 +19,7 @@ This document tracks planned and potential features for future releases of argh.
 - [x] Subcommand support (e.g. `git commit`)
 - [ ] Argument deprecation warnings
 - [ ] Config file support (e.g. JSON, TOML)
-- [ ] Hidden arguments (not shown in help)
+- [x] Hidden arguments (not shown in help)
 - [ ] Custom validators for arguments
 - [ ] Shell completion script generation (bash, zsh, fish)
 - [ ] Argument aliases (multiple names for the same flag/option)
