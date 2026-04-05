@@ -149,7 +149,9 @@ pub const Parser = struct {
 
     /// Get the value of a bool option, or error if not present or invalid.
     pub fn getOptionBool(self: *Parser, name: []const u8) !?bool {
-        if (self.options.get(name)) |opt| {
+        var resolved = name;
+        if (self.option_aliases.get(name)) |alias| resolved = alias;
+        if (self.options.get(resolved)) |opt| {
             if (opt.typ != .bool) return error.InvalidType;
             const val = std.mem.trim(u8, opt.value, " \t\n\r");
             if (std.ascii.eqlIgnoreCase(val, "true") or std.ascii.eqlIgnoreCase(val, "yes") or std.ascii.eqlIgnoreCase(val, "1"))
@@ -444,7 +446,9 @@ pub const Parser = struct {
     ///   name: The option name.
     /// Returns: The parsed int value, or error.
     pub fn getOptionInt(self: *Parser, name: []const u8) !?i64 {
-        if (self.options.get(name)) |opt| {
+        var resolved = name;
+        if (self.option_aliases.get(name)) |alias| resolved = alias;
+        if (self.options.get(resolved)) |opt| {
             if (opt.typ != .int) return error.InvalidType;
             const val = try std.fmt.parseInt(i64, opt.value, 10);
             if (opt.min_int) |min| if (val < min) return error.OutOfRange;
@@ -461,7 +465,9 @@ pub const Parser = struct {
     ///   name: The option name.
     /// Returns: The parsed float value, or error.
     pub fn getOptionFloat(self: *Parser, name: []const u8) !?f64 {
-        if (self.options.get(name)) |opt| {
+        var resolved = name;
+        if (self.option_aliases.get(name)) |alias| resolved = alias;
+        if (self.options.get(resolved)) |opt| {
             if (opt.typ != .float) return error.InvalidType;
             const val = try std.fmt.parseFloat(f64, opt.value);
             if (opt.min_float) |min| if (val < min) return error.OutOfRange;
