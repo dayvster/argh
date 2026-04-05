@@ -514,10 +514,10 @@ pub const Parser = struct {
                         i += 1;
                         try seen.put(self.allocator, resolved, true);
                     } else {
-                        try self.appendError("Missing value for option: ", arg);
+                        try self.appendError("Missing value for option: ", resolved);
                     }
                 } else {
-                    try self.appendError("Unknown argument: ", arg);
+                    try self.appendError("Unknown argument: ", resolved);
                 }
             } else if (std.mem.startsWith(u8, arg, "-") and arg.len == 2) {
                 var resolved: []const u8 = arg;
