@@ -226,20 +226,30 @@ pub const Parser = struct {
     ///   long: The long flag name (e.g. "--help"), or "" for short-only.
     ///   help: Description for help output.
     pub fn addFlag(self: *Parser, short: []const u8, long: []const u8, help: []const u8) !void {
-        try self.addFlagWithOptions(short, long, help, false);
+        try self.addFlagWithOptions(short, long, help, false, false);
     }
 
     /// Add a hidden flag (not shown in help output).
     pub fn addHiddenFlag(self: *Parser, short: []const u8, long: []const u8, help: []const u8) !void {
-        try self.addFlagWithOptions(short, long, help, true);
+        try self.addFlagWithOptions(short, long, help, false, false);
+    }
+
+    /// Add a deprecated flag (shows warning when used).
+    pub fn addDeprecatedFlag(self: *Parser, short: []const u8, long: []const u8, help: []const u8) !void {
+        try self.addFlagWithOptions(short, long, help, false, true);
+    }
+
+    /// Add a hidden flag (not shown in help output).
+    pub fn addHiddenDeprecatedFlag(self: *Parser, short: []const u8, long: []const u8, help: []const u8) !void {
+        try self.addFlagWithOptions(short, long, help, true, true);
     }
 
     /// Add a flag with options for hidden status.
-    fn addFlagWithOptions(self: *Parser, short: []const u8, long: []const u8, help: []const u8, hidden: bool) !void {
+    fn addFlagWithOptions(self: *Parser, short: []const u8, long: []const u8, help: []const u8, hidden: bool, deprecated: bool) !void {
         if (short.len == 0) return error.InvalidFlagName;
         const has_long = long.len > 0;
         const flag_ptr = try self.allocator.create(FlagInfo);
-        flag_ptr.* = FlagInfo{ .help = help, .hidden = hidden };
+        flag_ptr.* = FlagInfo{ .help = help, .hidden = hidden, .deprecated = deprecated };
         try self.flags.put(self.allocator, short, flag_ptr);
         if (has_long) {
             try self.flags.put(self.allocator, long, flag_ptr);
@@ -276,21 +286,32 @@ pub const Parser = struct {
     ///   min_count: Minimum number of values required.
     ///   max_count: Maximum number of values allowed.
     pub fn addPositionalWithCount(self: *Parser, name: []const u8, help: []const u8, min_count: usize, max_count: usize) !void {
-        try self.addPositionalWithCountAndHidden(name, help, min_count, max_count, false);
+        try self.addPositionalWithCountAndHidden(name, help, min_count, max_count, false, false);
     }
 
     /// Add a hidden positional argument (not shown in help output).
     pub fn addHiddenPositionalWithCount(self: *Parser, name: []const u8, help: []const u8, min_count: usize, max_count: usize) !void {
-        try self.addPositionalWithCountAndHidden(name, help, min_count, max_count, true);
+        try self.addPositionalWithCountAndHidden(name, help, min_count, max_count, true, false);
     }
 
-    fn addPositionalWithCountAndHidden(self: *Parser, name: []const u8, help: []const u8, min_count: usize, max_count: usize, hidden: bool) !void {
+    /// Add a deprecated positional argument (shows warning when used).
+    pub fn addDeprecatedPositionalWithCount(self: *Parser, name: []const u8, help: []const u8, min_count: usize, max_count: usize) !void {
+        try self.addPositionalWithCountAndHidden(name, help, min_count, max_count, false, true);
+    }
+
+    /// Add a hidden deprecated positional argument.
+    pub fn addHiddenDeprecatedPositionalWithCount(self: *Parser, name: []const u8, help: []const u8, min_count: usize, max_count: usize) !void {
+        try self.addPositionalWithCountAndHidden(name, help, min_count, max_count, true, true);
+    }
+
+    fn addPositionalWithCountAndHidden(self: *Parser, name: []const u8, help: []const u8, min_count: usize, max_count: usize, hidden: bool, deprecated: bool) !void {
         try self.positionals.append(self.allocator, PositionalInfo{
             .name = name,
             .help = help,
             .required = min_count > 0,
             .default = null,
             .hidden = hidden,
+            .deprecated = deprecated,
             .min_count = min_count,
             .max_count = max_count,
         });
@@ -357,16 +378,26 @@ pub const Parser = struct {
     ///   default: The default value as a string.
     ///   help: Description for help output.
     pub fn addOption(self: *Parser, long: []const u8, short: ?[]const u8, default: []const u8, help: []const u8) !void {
-        try self.addOptionWithOptions(long, short, default, help, false);
+        try self.addOptionWithOptions(long, short, default, help, false, false);
     }
 
     /// Add a hidden option (not shown in help output).
     pub fn addHiddenOption(self: *Parser, long: []const u8, short: ?[]const u8, default: []const u8, help: []const u8) !void {
-        try self.addOptionWithOptions(long, short, default, help, true);
+        try self.addOptionWithOptions(long, short, default, help, true, false);
     }
 
-    fn addOptionWithOptions(self: *Parser, long: []const u8, short: ?[]const u8, default: []const u8, help: []const u8, hidden: bool) !void {
-        try self.options.put(self.allocator, long, OptionInfo{ .help = help, .value = default, .default = default, .hidden = hidden });
+    /// Add a deprecated option (shows warning when used).
+    pub fn addDeprecatedOption(self: *Parser, long: []const u8, short: ?[]const u8, default: []const u8, help: []const u8) !void {
+        try self.addOptionWithOptions(long, short, default, help, false, true);
+    }
+
+    /// Add a hidden deprecated option.
+    pub fn addHiddenDeprecatedOption(self: *Parser, long: []const u8, short: ?[]const u8, default: []const u8, help: []const u8) !void {
+        try self.addOptionWithOptions(long, short, default, help, true, true);
+    }
+
+    fn addOptionWithOptions(self: *Parser, long: []const u8, short: ?[]const u8, default: []const u8, help: []const u8, hidden: bool, deprecated: bool) !void {
+        try self.options.put(self.allocator, long, OptionInfo{ .help = help, .value = default, .default = default, .hidden = hidden, .deprecated = deprecated });
         if (short) |s| {
             try self.short_options.put(self.allocator, s, long);
         }
@@ -381,15 +412,25 @@ pub const Parser = struct {
     ///   min: Optional minimum value.
     ///   max: Optional maximum value.
     pub fn addIntOption(self: *Parser, long: []const u8, short: ?[]const u8, default: i64, help: []const u8, min: ?i64, max: ?i64) !void {
-        try self.addIntOptionWithOptions(long, short, default, help, min, max, false);
+        try self.addIntOptionWithOptions(long, short, default, help, min, max, false, false);
     }
 
     /// Add a hidden int option.
     pub fn addHiddenIntOption(self: *Parser, long: []const u8, short: ?[]const u8, default: i64, help: []const u8, min: ?i64, max: ?i64) !void {
-        try self.addIntOptionWithOptions(long, short, default, help, min, max, true);
+        try self.addIntOptionWithOptions(long, short, default, help, min, max, true, false);
     }
 
-    fn addIntOptionWithOptions(self: *Parser, long: []const u8, short: ?[]const u8, default: i64, help: []const u8, min: ?i64, max: ?i64, hidden: bool) !void {
+    /// Add a deprecated int option.
+    pub fn addDeprecatedIntOption(self: *Parser, long: []const u8, short: ?[]const u8, default: i64, help: []const u8, min: ?i64, max: ?i64) !void {
+        try self.addIntOptionWithOptions(long, short, default, help, min, max, false, true);
+    }
+
+    /// Add a hidden deprecated int option.
+    pub fn addHiddenDeprecatedIntOption(self: *Parser, long: []const u8, short: ?[]const u8, default: i64, help: []const u8, min: ?i64, max: ?i64) !void {
+        try self.addIntOptionWithOptions(long, short, default, help, min, max, true, true);
+    }
+
+    fn addIntOptionWithOptions(self: *Parser, long: []const u8, short: ?[]const u8, default: i64, help: []const u8, min: ?i64, max: ?i64, hidden: bool, deprecated: bool) !void {
         const def_str = try std.fmt.allocPrint(self.allocator, "{}", .{default});
         try self.options.put(self.allocator, long, OptionInfo{
             .help = help,
@@ -399,6 +440,7 @@ pub const Parser = struct {
             .min_int = min,
             .max_int = max,
             .hidden = hidden,
+            .deprecated = deprecated,
         });
         if (short) |s| {
             try self.short_options.put(self.allocator, s, long);
@@ -415,15 +457,25 @@ pub const Parser = struct {
     ///   min: Optional minimum value.
     ///   max: Optional maximum value.
     pub fn addFloatOption(self: *Parser, long: []const u8, short: ?[]const u8, default: f64, help: []const u8, min: ?f64, max: ?f64) !void {
-        try self.addFloatOptionWithOptions(long, short, default, help, min, max, false);
+        try self.addFloatOptionWithOptions(long, short, default, help, min, max, false, false);
     }
 
     /// Add a hidden float option.
     pub fn addHiddenFloatOption(self: *Parser, long: []const u8, short: ?[]const u8, default: f64, help: []const u8, min: ?f64, max: ?f64) !void {
-        try self.addFloatOptionWithOptions(long, short, default, help, min, max, true);
+        try self.addFloatOptionWithOptions(long, short, default, help, min, max, true, false);
     }
 
-    fn addFloatOptionWithOptions(self: *Parser, long: []const u8, short: ?[]const u8, default: f64, help: []const u8, min: ?f64, max: ?f64, hidden: bool) !void {
+    /// Add a deprecated float option.
+    pub fn addDeprecatedFloatOption(self: *Parser, long: []const u8, short: ?[]const u8, default: f64, help: []const u8, min: ?f64, max: ?f64) !void {
+        try self.addFloatOptionWithOptions(long, short, default, help, min, max, false, true);
+    }
+
+    /// Add a hidden deprecated float option.
+    pub fn addHiddenDeprecatedFloatOption(self: *Parser, long: []const u8, short: ?[]const u8, default: f64, help: []const u8, min: ?f64, max: ?f64) !void {
+        try self.addFloatOptionWithOptions(long, short, default, help, min, max, true, true);
+    }
+
+    fn addFloatOptionWithOptions(self: *Parser, long: []const u8, short: ?[]const u8, default: f64, help: []const u8, min: ?f64, max: ?f64, hidden: bool, deprecated: bool) !void {
         const def_str = try std.fmt.allocPrint(self.allocator, "{}", .{default});
         try self.options.put(self.allocator, long, OptionInfo{
             .help = help,
@@ -433,6 +485,7 @@ pub const Parser = struct {
             .min_float = min,
             .max_float = max,
             .hidden = hidden,
+            .deprecated = deprecated,
         });
         if (short) |s| {
             try self.short_options.put(self.allocator, s, long);
@@ -518,6 +571,9 @@ pub const Parser = struct {
                         count_ptr.* += 1;
                         canonical_flag.count += 1;
                     }
+                    if (canonical_flag.deprecated) {
+                        try self.deprecation_warnings.append(self.allocator, resolved);
+                    }
                     try seen.put(self.allocator, resolved, true);
                     if (self.short_flags.get(resolved)) |short| {
                         try seen.put(self.allocator, short, true);
@@ -532,6 +588,9 @@ pub const Parser = struct {
                         std.mem.copyForwards(u8, val_copy, val);
                         opt.value = val_copy;
                         i += 1;
+                        if (opt.deprecated) {
+                            try self.deprecation_warnings.append(self.allocator, arg);
+                        }
                         try seen.put(self.allocator, resolved, true);
                     } else {
                         try self.appendError("Missing value for option: ", resolved);
@@ -563,6 +622,9 @@ pub const Parser = struct {
                     if (self.flag_counts.getPtr(canonical_flag)) |count_ptr| {
                         count_ptr.* += 1;
                         canonical_flag.count += 1;
+                    }
+                    if (canonical_flag.deprecated) {
+                        try self.deprecation_warnings.append(self.allocator, resolved);
                     }
                     try seen.put(self.allocator, resolved, true);
                     if (self.short_flags.get(resolved)) |long| {
@@ -602,6 +664,9 @@ pub const Parser = struct {
                         const val_copy = try self.allocator.alloc(u8, arg.len);
                         std.mem.copyForwards(u8, val_copy, arg);
                         self.positionals.items[pos_idx].value = val_copy;
+                    }
+                    if (self.positionals.items[pos_idx].deprecated) {
+                        try self.deprecation_warnings.append(self.allocator, arg);
                     }
                     if (positional_counts[pos_idx] >= self.positionals.items[pos_idx].max_count) {
                         pos_idx += 1;
@@ -655,7 +720,9 @@ pub const Parser = struct {
 
     /// Return the number of times a flag was provided.
     pub fn flagCount(self: *Parser, name: []const u8) usize {
-        if (self.flags.get(name)) |flag_ptr| {
+        var resolved = name;
+        if (self.flag_aliases.get(name)) |alias| resolved = alias;
+        if (self.flags.get(resolved)) |flag_ptr| {
             if (self.flag_counts.get(flag_ptr)) |count| return count;
         }
         return 0;
@@ -1200,4 +1267,64 @@ test "alias conflict is detected" {
     try std.testing.expectError(error.AliasConflict, parser.addOptionAlias("--name", "--name"));
     try parser.addOption("--conflict", null, "default", "A conflicting option");
     try std.testing.expectError(error.AliasConflict, parser.addOptionAlias("--conflict", "--name"));
+}
+
+test "querying option by alias returns value" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var args = [_][:0]const u8{
+        std.mem.sliceTo("--alias-name", 0),
+        std.mem.sliceTo("value", 0),
+    };
+    var parser = Parser.init(allocator, args[0..]);
+    try parser.addOption("--name", null, "default", "The name");
+    try parser.addOptionAlias("--alias-name", "--name");
+    try parser.parse();
+    try std.testing.expectEqualStrings("value", parser.getOption("--alias-name").?);
+}
+
+test "querying flag by alias returns true" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var args = [_][:0]const u8{
+        std.mem.sliceTo("--chatty", 0),
+    };
+    var parser = Parser.init(allocator, args[0..]);
+    try parser.addFlag("-v", "--verbose", "Verbose output");
+    try parser.addFlagAlias("--chatty", "--verbose");
+    try parser.parse();
+    try std.testing.expect(parser.flagPresent("--chatty"));
+}
+
+test "deprecated flag emits warning" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var args = [_][:0]const u8{
+        std.mem.sliceTo("--old-flag", 0),
+    };
+    var parser = Parser.init(allocator, args[0..]);
+    try parser.addDeprecatedFlag("-o", "--old-flag", "Old flag");
+    try parser.parse();
+    try std.testing.expect(parser.flagPresent("--old-flag"));
+    try std.testing.expect(parser.deprecation_warnings.items.len == 1);
+    try std.testing.expectEqualStrings("--old-flag", parser.deprecation_warnings.items[0]);
+}
+
+test "deprecated option emits warning" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var args = [_][:0]const u8{
+        std.mem.sliceTo("--old-opt", 0),
+        std.mem.sliceTo("value", 0),
+    };
+    var parser = Parser.init(allocator, args[0..]);
+    try parser.addDeprecatedOption("--old-opt", null, "", "Old option");
+    try parser.parse();
+    try std.testing.expectEqualStrings("value", parser.getOption("--old-opt").?);
+    try std.testing.expect(parser.deprecation_warnings.items.len == 1);
+    try std.testing.expectEqualStrings("--old-opt", parser.deprecation_warnings.items[0]);
 }
