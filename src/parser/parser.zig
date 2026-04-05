@@ -18,6 +18,7 @@ fn isValidAliasFormat(name: []const u8) bool {
 pub const Parser = struct {
     allocator: std.mem.Allocator,
     args: []const [:0]const u8,
+    program_name: ?[]const u8 = null,
     flags: std.StringHashMapUnmanaged(*FlagInfo),
     flag_counts: std.AutoHashMapUnmanaged(*FlagInfo, usize),
     options: std.StringHashMapUnmanaged(OptionInfo),
@@ -50,49 +51,16 @@ pub const Parser = struct {
         };
     }
 
-    pub fn deinit(self: *Parser) void {
-        var fit = self.flags.iterator();
-        while (fit.next()) |entry| {
-            self.allocator.destroy(entry.value_ptr.*);
+    pub fn setProgramName(self: *Parser, name: []const u8) void {
+        if (self.program_name) |old| {
+            self.allocator.free(old);
         }
-        self.flags.deinit(self.allocator);
-
-        var oit = self.options.iterator();
-        while (oit.next()) |entry| {
-            const opt = entry.value_ptr;
-            if (opt.value.ptr != opt.default.ptr) {
-                self.allocator.free(opt.value);
-            }
-        }
-        self.options.deinit(self.allocator);
-
-        for (self.positionals.items) |*pos| {
-            if (pos.value) |v| {
-                self.allocator.free(v);
-            }
-        }
-        self.positionals.deinit(self.allocator);
-
-        self.flag_counts.deinit(self.allocator);
-        self.short_options.deinit(self.allocator);
-        self.short_flags.deinit(self.allocator);
-        self.option_aliases.deinit(self.allocator);
-        self.flag_aliases.deinit(self.allocator);
-        self.errors.deinit(self.allocator);
-        self.deprecation_warnings.deinit(self.allocator);
-        var mit = self.mutex_groups.iterator();
-        while (mit.next()) |entry| {
-            entry.value_ptr.members.deinit(self.allocator);
-        }
-        self.mutex_groups.deinit(self.allocator);
-        self.subcommands.deinit(self.allocator);
-    }
-
-    fn appendError(self: *Parser, msg: []const u8, arg: ?[]const u8) !void {
-        try self.errors.append(self.allocator, msg);
-        if (arg) |a| {
-            try self.errors.append(self.allocator, a);
-        }
+        const copy = self.allocator.alloc(u8, name.len) catch {
+            self.program_name = name;
+            return;
+        };
+        std.mem.copyForwards(u8, copy, name);
+        self.program_name = copy;
     }
 
     pub fn getSubcommand(self: *Parser) ?[]const u8 {
@@ -103,6 +71,11 @@ pub const Parser = struct {
             }
         }
         return null;
+    }
+
+    fn appendError(self: *Parser, msg: []const u8, arg: ?[]const u8) !void {
+        const full = try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ msg, arg orelse "" });
+        try self.errors.append(self.allocator, full);
     }
 
     pub fn getSubcommandParser(self: *Parser) ?*Parser {
@@ -141,18 +114,22 @@ pub const Parser = struct {
     }
 
     pub fn addFlag(self: *Parser, short: []const u8, long: []const u8, help: []const u8) !void {
-        try self.addFlagWithOptions(short, long, help, false);
+        try self.addFlagWithOptions(short, long, help, false, false, null);
     }
 
     pub fn addHiddenFlag(self: *Parser, short: []const u8, long: []const u8, help: []const u8) !void {
-        try self.addFlagWithOptions(short, long, help, true);
+        try self.addFlagWithOptions(short, long, help, true, false, null);
     }
 
-    fn addFlagWithOptions(self: *Parser, short: []const u8, long: []const u8, help: []const u8, hidden: bool) !void {
+    pub fn addRequiredFlag(self: *Parser, short: []const u8, long: []const u8, help: []const u8) !void {
+        try self.addFlagWithOptions(short, long, help, false, true, null);
+    }
+
+    fn addFlagWithOptions(self: *Parser, short: []const u8, long: []const u8, help: []const u8, hidden: bool, required: bool, group: ?[]const u8) !void {
         if (short.len == 0) return error.InvalidFlagName;
         const has_long = long.len > 0;
         const flag_ptr = try self.allocator.create(FlagInfo);
-        flag_ptr.* = FlagInfo{ .help = help, .hidden = hidden };
+        flag_ptr.* = FlagInfo{ .help = help, .hidden = hidden, .required = required, .group = group };
         try self.flags.put(self.allocator, short, flag_ptr);
         if (has_long) {
             try self.flags.put(self.allocator, long, flag_ptr);
@@ -224,29 +201,33 @@ pub const Parser = struct {
     }
 
     pub fn addOption(self: *Parser, long: []const u8, short: ?[]const u8, default: []const u8, help: []const u8) !void {
-        try self.addOptionWithOptions(long, short, default, help, false);
+        try self.addOptionWithOptions(long, short, default, help, false, false, null);
     }
 
     pub fn addHiddenOption(self: *Parser, long: []const u8, short: ?[]const u8, default: []const u8, help: []const u8) !void {
-        try self.addOptionWithOptions(long, short, default, help, true);
+        try self.addOptionWithOptions(long, short, default, help, true, false, null);
     }
 
-    fn addOptionWithOptions(self: *Parser, long: []const u8, short: ?[]const u8, default: []const u8, help: []const u8, hidden: bool) !void {
-        try self.options.put(self.allocator, long, OptionInfo{ .help = help, .value = default, .default = default, .hidden = hidden });
+    pub fn addRequiredOption(self: *Parser, long: []const u8, short: ?[]const u8, help: []const u8) !void {
+        try self.addOptionWithOptions(long, short, "", help, false, true, null);
+    }
+
+    fn addOptionWithOptions(self: *Parser, long: []const u8, short: ?[]const u8, default: []const u8, help: []const u8, hidden: bool, required: bool, group: ?[]const u8) !void {
+        try self.options.put(self.allocator, long, OptionInfo{ .help = help, .value = default, .default = default, .hidden = hidden, .required = required, .group = group });
         if (short) |s| {
             try self.short_options.put(self.allocator, s, long);
         }
     }
 
     pub fn addIntOption(self: *Parser, long: []const u8, short: ?[]const u8, default: i64, help: []const u8, min: ?i64, max: ?i64) !void {
-        try self.addIntOptionWithOptions(long, short, default, help, min, max, false);
+        try self.addIntOptionWithOptions(long, short, default, help, min, max, false, false, null);
     }
 
     pub fn addHiddenIntOption(self: *Parser, long: []const u8, short: ?[]const u8, default: i64, help: []const u8, min: ?i64, max: ?i64) !void {
-        try self.addIntOptionWithOptions(long, short, default, help, min, max, true);
+        try self.addIntOptionWithOptions(long, short, default, help, min, max, true, false, null);
     }
 
-    fn addIntOptionWithOptions(self: *Parser, long: []const u8, short: ?[]const u8, default: i64, help: []const u8, min: ?i64, max: ?i64, hidden: bool) !void {
+    fn addIntOptionWithOptions(self: *Parser, long: []const u8, short: ?[]const u8, default: i64, help: []const u8, min: ?i64, max: ?i64, hidden: bool, required: bool, group: ?[]const u8) !void {
         const def_str = try std.fmt.allocPrint(self.allocator, "{}", .{default});
         try self.options.put(self.allocator, long, OptionInfo{
             .help = help,
@@ -256,6 +237,8 @@ pub const Parser = struct {
             .min_int = min,
             .max_int = max,
             .hidden = hidden,
+            .required = required,
+            .group = group,
         });
         if (short) |s| {
             try self.short_options.put(self.allocator, s, long);
@@ -263,14 +246,14 @@ pub const Parser = struct {
     }
 
     pub fn addFloatOption(self: *Parser, long: []const u8, short: ?[]const u8, default: f64, help: []const u8, min: ?f64, max: ?f64) !void {
-        try self.addFloatOptionWithOptions(long, short, default, help, min, max, false);
+        try self.addFloatOptionWithOptions(long, short, default, help, min, max, false, false, null);
     }
 
     pub fn addHiddenFloatOption(self: *Parser, long: []const u8, short: ?[]const u8, default: f64, help: []const u8, min: ?f64, max: ?f64) !void {
-        try self.addFloatOptionWithOptions(long, short, default, help, min, max, true);
+        try self.addFloatOptionWithOptions(long, short, default, help, min, max, true, false, null);
     }
 
-    fn addFloatOptionWithOptions(self: *Parser, long: []const u8, short: ?[]const u8, default: f64, help: []const u8, min: ?f64, max: ?f64, hidden: bool) !void {
+    fn addFloatOptionWithOptions(self: *Parser, long: []const u8, short: ?[]const u8, default: f64, help: []const u8, min: ?f64, max: ?f64, hidden: bool, required: bool, group: ?[]const u8) !void {
         const def_str = try std.fmt.allocPrint(self.allocator, "{}", .{default});
         try self.options.put(self.allocator, long, OptionInfo{
             .help = help,
@@ -280,6 +263,8 @@ pub const Parser = struct {
             .min_float = min,
             .max_float = max,
             .hidden = hidden,
+            .required = required,
+            .group = group,
         });
         if (short) |s| {
             try self.short_options.put(self.allocator, s, long);
@@ -450,8 +435,12 @@ pub const Parser = struct {
         var oit = self.options.iterator();
         while (oit.next()) |entry| {
             const opt = entry.value_ptr;
-            if (opt.required and (opt.value.ptr == opt.default.ptr or opt.value.len == 0)) {
-                try self.appendError("Missing required option: ", entry.key_ptr.*);
+            const key = entry.key_ptr.*;
+            if (opt.required) {
+                const resolved = utils.resolveOptionAlias(key, self.option_aliases, self.short_options);
+                if (!seen.contains(resolved) and opt.value.len == 0) {
+                    try self.appendError("Missing required option: ", key);
+                }
             }
         }
         for (self.positionals.items, 0..) |pos, idx| {
@@ -515,8 +504,13 @@ pub const Parser = struct {
         }
     }
 
+    fn getProgramName(self: *Parser) []const u8 {
+        return self.program_name orelse if (self.args.len > 0) self.args[0] else "<program>";
+    }
+
     fn printHelpFlat(self: *Parser) void {
-        std.debug.print("Usage: <program> [options] [flags]", .{});
+        const prog = self.getProgramName();
+        std.debug.print("Usage: {s} [options] [flags]", .{prog});
         if (self.positionals.items.len > 0) {
             for (self.positionals.items) |pos| {
                 if (pos.hidden) continue;
@@ -642,7 +636,8 @@ pub const Parser = struct {
                 arr.append(self.allocator, entry.key_ptr.*) catch {};
             }
         }
-        std.debug.print("Usage: <program> [options] [flags]", .{});
+        const prog = self.getProgramName();
+        std.debug.print("Usage: {s} [options] [flags]", .{prog});
         if (self.positionals.items.len > 0) {
             for (self.positionals.items) |pos| {
                 if (pos.hidden) continue;
