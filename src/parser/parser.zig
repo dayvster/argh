@@ -51,14 +51,11 @@ pub const Parser = struct {
         };
     }
 
-    pub fn setProgramName(self: *Parser, name: []const u8) void {
+    pub fn setProgramName(self: *Parser, name: []const u8) !void {
         if (self.program_name) |old| {
             self.allocator.free(old);
         }
-        const copy = self.allocator.alloc(u8, name.len) catch {
-            self.program_name = name;
-            return;
-        };
+        const copy = try self.allocator.alloc(u8, name.len);
         std.mem.copyForwards(u8, copy, name);
         self.program_name = copy;
     }
@@ -427,7 +424,7 @@ pub const Parser = struct {
         while (fit.next()) |entry| {
             const flag_info = entry.value_ptr.*;
             if (checked_flags.contains(flag_info)) continue;
-            checked_flags.put(self.allocator, flag_info, {}) catch {};
+            try checked_flags.put(self.allocator, flag_info, {});
             if (flag_info.required and flag_info.count == 0) {
                 try self.appendError("Missing required flag: ", entry.key_ptr.*);
             }
@@ -582,7 +579,15 @@ pub const Parser = struct {
                 const res = std.fmt.bufPrint(&line_buf, "      {s}", .{l}) catch unreachable;
                 line = line_buf[0..res.len];
             } else {
-                line = &.{};
+                var fallback_it = self.flags.iterator();
+                while (fallback_it.next()) |e| {
+                    if (e.value_ptr.* == flag) {
+                        const res = std.fmt.bufPrint(&line_buf, "      {s}", .{e.key_ptr.*}) catch unreachable;
+                        line = line_buf[0..res.len];
+                        break;
+                    }
+                }
+                if (line.len == 0) line = line_buf[0..0];
             }
 
             const pad_len = utils.padToColumn(&line_buf, line.len, 22);
@@ -625,15 +630,22 @@ pub const Parser = struct {
         }
         var flag_groups = std.StringHashMapUnmanaged(std.ArrayListUnmanaged([]const u8)){};
         defer flag_groups.deinit(self.allocator);
-        var flag_it = self.flags.iterator();
-        while (flag_it.next()) |entry| {
-            if (entry.value_ptr.*.hidden) continue;
-            const group = entry.value_ptr.*.group orelse "(ungrouped)";
+        var fcit = self.flag_counts.iterator();
+        while (fcit.next()) |entry| {
+            const flag = entry.key_ptr.*;
+            if (flag.hidden) continue;
+            const group = flag.group orelse "(ungrouped)";
             if (!flag_groups.contains(group)) {
                 flag_groups.put(self.allocator, group, std.ArrayListUnmanaged([]const u8){}) catch {};
             }
             if (flag_groups.getPtr(group)) |arr| {
-                arr.append(self.allocator, entry.key_ptr.*) catch {};
+                var name_it = self.flags.iterator();
+                while (name_it.next()) |e| {
+                    if (e.value_ptr.* == flag) {
+                        arr.append(self.allocator, e.key_ptr.*) catch {};
+                        break;
+                    }
+                }
             }
         }
         const prog = self.getProgramName();
