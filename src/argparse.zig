@@ -632,7 +632,9 @@ pub const Parser = struct {
 
     /// Return the number of times a flag was provided.
     pub fn flagCount(self: *Parser, name: []const u8) usize {
-        if (self.flags.get(name)) |flag_ptr| {
+        var resolved = name;
+        if (self.flag_aliases.get(name)) |alias| resolved = alias;
+        if (self.flags.get(resolved)) |flag_ptr| {
             if (self.flag_counts.get(flag_ptr)) |count| return count;
         }
         return 0;
@@ -645,7 +647,9 @@ pub const Parser = struct {
 
     /// Get the value of an option, or null if not present.
     pub fn getOption(self: *Parser, name: []const u8) ?[]const u8 {
-        if (self.options.get(name)) |opt| {
+        var resolved = name;
+        if (self.option_aliases.get(name)) |alias| resolved = alias;
+        if (self.options.get(resolved)) |opt| {
             return opt.value;
         }
         return null;
@@ -1168,4 +1172,33 @@ test "alias conflict is detected" {
     try std.testing.expectError(error.AliasConflict, parser.addOptionAlias("--name", "--name"));
     try parser.addOption("--conflict", null, "default", "A conflicting option");
     try std.testing.expectError(error.AliasConflict, parser.addOptionAlias("--conflict", "--name"));
+}
+
+test "querying option by alias returns value" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var args = [_][:0]const u8{
+        std.mem.sliceTo("--alias-name", 0),
+        std.mem.sliceTo("value", 0),
+    };
+    var parser = Parser.init(allocator, args[0..]);
+    try parser.addOption("--name", null, "default", "The name");
+    try parser.addOptionAlias("--alias-name", "--name");
+    try parser.parse();
+    try std.testing.expectEqualStrings("value", parser.getOption("--alias-name").?);
+}
+
+test "querying flag by alias returns true" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var args = [_][:0]const u8{
+        std.mem.sliceTo("--chatty", 0),
+    };
+    var parser = Parser.init(allocator, args[0..]);
+    try parser.addFlag("-v", "--verbose", "Verbose output");
+    try parser.addFlagAlias("--chatty", "--verbose");
+    try parser.parse();
+    try std.testing.expect(parser.flagPresent("--chatty"));
 }
