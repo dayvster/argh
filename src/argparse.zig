@@ -8,6 +8,7 @@ pub const ParseError = error{
     InvalidFlag,
     OutOfRange,
     AliasConflict,
+    InvalidAliasFormat,
     OutOfMemory,
 };
 
@@ -145,7 +146,7 @@ pub const Parser = struct {
     /// Get the value of a bool option, or error if not present or invalid.
     pub fn getOptionBool(self: *Parser, name: []const u8) !?bool {
         var resolved = name;
-        if (self.option_aliases.get(name)) |alias| resolved = alias;
+        if (self.option_aliases.get(name)) |alias| resolved = alias else if (self.short_options.get(name)) |opt| resolved = opt;
         if (self.options.get(resolved)) |opt| {
             if (opt.typ != .bool) return error.InvalidType;
             const val = std.mem.trim(u8, opt.value, " \t\n\r");
@@ -310,6 +311,7 @@ pub const Parser = struct {
     ///   canonical: The canonical option name (e.g. "--name").
     pub fn addOptionAlias(self: *Parser, alias: []const u8, canonical: []const u8) ParseError!void {
         if (self.options.get(canonical) == null) return error.InvalidOption;
+        if (!isValidAliasFormat(alias)) return error.InvalidAliasFormat;
         if (self.options.contains(alias) or self.flags.contains(alias) or
             self.short_options.contains(alias) or self.short_flags.contains(alias) or
             self.option_aliases.contains(alias) or self.flag_aliases.contains(alias))
@@ -326,6 +328,7 @@ pub const Parser = struct {
     ///   canonical: The canonical flag name (e.g. "--verbose").
     pub fn addFlagAlias(self: *Parser, alias: []const u8, canonical: []const u8) ParseError!void {
         if (self.flags.get(canonical) == null) return error.InvalidFlag;
+        if (!isValidAliasFormat(alias)) return error.InvalidAliasFormat;
         if (self.options.contains(alias) or self.flags.contains(alias) or
             self.short_options.contains(alias) or self.short_flags.contains(alias) or
             self.option_aliases.contains(alias) or self.flag_aliases.contains(alias))
@@ -333,6 +336,12 @@ pub const Parser = struct {
             return error.AliasConflict;
         }
         try self.flag_aliases.put(self.allocator, alias, canonical);
+    }
+
+    fn isValidAliasFormat(name: []const u8) bool {
+        if (std.mem.startsWith(u8, name, "--")) return true;
+        if (std.mem.startsWith(u8, name, "-") and name.len == 2) return true;
+        return false;
     }
 
     /// Add a long option (e.g. --name) with default value and help text.
@@ -433,7 +442,7 @@ pub const Parser = struct {
     /// Returns: The parsed int value, or error.
     pub fn getOptionInt(self: *Parser, name: []const u8) !?i64 {
         var resolved = name;
-        if (self.option_aliases.get(name)) |alias| resolved = alias;
+        if (self.option_aliases.get(name)) |alias| resolved = alias else if (self.short_options.get(name)) |opt| resolved = opt;
         if (self.options.get(resolved)) |opt| {
             if (opt.typ != .int) return error.InvalidType;
             const val = try std.fmt.parseInt(i64, opt.value, 10);
@@ -452,7 +461,7 @@ pub const Parser = struct {
     /// Returns: The parsed float value, or error.
     pub fn getOptionFloat(self: *Parser, name: []const u8) !?f64 {
         var resolved = name;
-        if (self.option_aliases.get(name)) |alias| resolved = alias;
+        if (self.option_aliases.get(name)) |alias| resolved = alias else if (self.short_options.get(name)) |opt| resolved = opt;
         if (self.options.get(resolved)) |opt| {
             if (opt.typ != .float) return error.InvalidType;
             const val = try std.fmt.parseFloat(f64, opt.value);
@@ -654,7 +663,7 @@ pub const Parser = struct {
     /// Get the value of an option, or null if not present.
     pub fn getOption(self: *Parser, name: []const u8) ?[]const u8 {
         var resolved = name;
-        if (self.option_aliases.get(name)) |alias| resolved = alias;
+        if (self.option_aliases.get(name)) |alias| resolved = alias else if (self.short_options.get(name)) |opt| resolved = opt;
         if (self.options.get(resolved)) |opt| {
             return opt.value;
         }
