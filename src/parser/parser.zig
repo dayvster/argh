@@ -1,5 +1,6 @@
 const std = @import("std");
 const types = @import("../types/types.zig");
+const utils = @import("../utils/utils.zig");
 
 pub const ParseError = types.ParseError;
 pub const OptionType = types.OptionType;
@@ -7,6 +8,12 @@ pub const FlagInfo = types.FlagInfo;
 pub const OptionInfo = types.OptionInfo;
 pub const PositionalInfo = types.PositionalInfo;
 pub const MutexGroup = types.MutexGroup;
+
+fn isValidAliasFormat(name: []const u8) bool {
+    if (std.mem.startsWith(u8, name, "--")) return true;
+    if (std.mem.startsWith(u8, name, "-") and name.len == 2) return true;
+    return false;
+}
 
 pub const Parser = struct {
     allocator: std.mem.Allocator,
@@ -44,16 +51,39 @@ pub const Parser = struct {
     }
 
     pub fn deinit(self: *Parser) void {
+        var fit = self.flags.iterator();
+        while (fit.next()) |entry| {
+            self.allocator.destroy(entry.value_ptr.*);
+        }
         self.flags.deinit(self.allocator);
-        self.flag_counts.deinit(self.allocator);
+
+        var oit = self.options.iterator();
+        while (oit.next()) |entry| {
+            const opt = entry.value_ptr;
+            if (opt.value.ptr != opt.default.ptr) {
+                self.allocator.free(opt.value);
+            }
+        }
         self.options.deinit(self.allocator);
+
+        for (self.positionals.items) |*pos| {
+            if (pos.value) |v| {
+                self.allocator.free(v);
+            }
+        }
+        self.positionals.deinit(self.allocator);
+
+        self.flag_counts.deinit(self.allocator);
         self.short_options.deinit(self.allocator);
         self.short_flags.deinit(self.allocator);
         self.option_aliases.deinit(self.allocator);
         self.flag_aliases.deinit(self.allocator);
-        self.positionals.deinit(self.allocator);
         self.errors.deinit(self.allocator);
         self.deprecation_warnings.deinit(self.allocator);
+        var mit = self.mutex_groups.iterator();
+        while (mit.next()) |entry| {
+            entry.value_ptr.members.deinit(self.allocator);
+        }
         self.mutex_groups.deinit(self.allocator);
         self.subcommands.deinit(self.allocator);
     }
@@ -63,12 +93,6 @@ pub const Parser = struct {
         if (arg) |a| {
             try self.errors.append(self.allocator, a);
         }
-    }
-
-    fn isValidAliasFormat(name: []const u8) bool {
-        if (std.mem.startsWith(u8, name, "--")) return true;
-        if (std.mem.startsWith(u8, name, "-") and name.len == 2) return true;
-        return false;
     }
 
     pub fn getSubcommand(self: *Parser) ?[]const u8 {
@@ -103,8 +127,7 @@ pub const Parser = struct {
     }
 
     pub fn getOptionBool(self: *Parser, name: []const u8) !?bool {
-        var resolved = name;
-        if (self.option_aliases.get(name)) |alias| resolved = alias else if (self.short_options.get(name)) |opt| resolved = opt;
+        const resolved = utils.resolveOptionAlias(name, self.option_aliases, self.short_options);
         if (self.options.get(resolved)) |opt| {
             if (opt.typ != .bool) return error.InvalidType;
             const val = std.mem.trim(u8, opt.value, " \t\n\r");
@@ -171,14 +194,14 @@ pub const Parser = struct {
     }
 
     pub fn addMutexGroup(self: *Parser, group_name: []const u8, members: []const []const u8) !void {
-        _ = members;
-        const group = MutexGroup{ .members = .{} };
+        var group = MutexGroup{ .members = .{} };
+        try group.members.appendSlice(self.allocator, members);
         try self.mutex_groups.put(self.allocator, group_name, group);
     }
 
     pub fn addOptionAlias(self: *Parser, alias: []const u8, canonical: []const u8) ParseError!void {
         if (self.options.get(canonical) == null) return error.InvalidOption;
-        if (!self.isValidAliasFormat(alias)) return error.InvalidAliasFormat;
+        if (!isValidAliasFormat(alias)) return error.InvalidAliasFormat;
         if (self.options.contains(alias) or self.flags.contains(alias) or
             self.short_options.contains(alias) or self.short_flags.contains(alias) or
             self.option_aliases.contains(alias) or self.flag_aliases.contains(alias))
@@ -190,7 +213,7 @@ pub const Parser = struct {
 
     pub fn addFlagAlias(self: *Parser, alias: []const u8, canonical: []const u8) ParseError!void {
         if (self.flags.get(canonical) == null) return error.InvalidFlag;
-        if (!self.isValidAliasFormat(alias)) return error.InvalidAliasFormat;
+        if (!isValidAliasFormat(alias)) return error.InvalidAliasFormat;
         if (self.options.contains(alias) or self.flags.contains(alias) or
             self.short_options.contains(alias) or self.short_flags.contains(alias) or
             self.option_aliases.contains(alias) or self.flag_aliases.contains(alias))
@@ -264,8 +287,7 @@ pub const Parser = struct {
     }
 
     pub fn getOptionInt(self: *Parser, name: []const u8) !?i64 {
-        var resolved = name;
-        if (self.option_aliases.get(name)) |alias| resolved = alias else if (self.short_options.get(name)) |opt| resolved = opt;
+        const resolved = utils.resolveOptionAlias(name, self.option_aliases, self.short_options);
         if (self.options.get(resolved)) |opt| {
             if (opt.typ != .int) return error.InvalidType;
             const val = try std.fmt.parseInt(i64, opt.value, 10);
@@ -277,8 +299,7 @@ pub const Parser = struct {
     }
 
     pub fn getOptionFloat(self: *Parser, name: []const u8) !?f64 {
-        var resolved = name;
-        if (self.option_aliases.get(name)) |alias| resolved = alias else if (self.short_options.get(name)) |opt| resolved = opt;
+        const resolved = utils.resolveOptionAlias(name, self.option_aliases, self.short_options);
         if (self.options.get(resolved)) |opt| {
             if (opt.typ != .float) return error.InvalidType;
             const val = try std.fmt.parseFloat(f64, opt.value);
@@ -295,6 +316,7 @@ pub const Parser = struct {
         var seen: std.StringHashMapUnmanaged(bool) = .{};
         defer seen.deinit(self.allocator);
         var positional_counts: []usize = try self.allocator.alloc(usize, self.positionals.items.len);
+        defer self.allocator.free(positional_counts);
         for (positional_counts) |*c| c.* = 0;
         var fcit = self.flag_counts.iterator();
         while (fcit.next()) |entry| {
@@ -395,11 +417,11 @@ pub const Parser = struct {
                 if (pos_idx < self.positionals.items.len) {
                     positional_counts[pos_idx] += 1;
                     if (self.positionals.items[pos_idx].value) |old| {
-                        self.allocator.free(old);
                         const new_val = try self.allocator.alloc(u8, old.len + 1 + arg.len);
                         std.mem.copyForwards(u8, new_val[0..old.len], old);
                         new_val[old.len] = ' ';
                         std.mem.copyForwards(u8, new_val[old.len + 1 ..], arg);
+                        self.allocator.free(old);
                         self.positionals.items[pos_idx].value = new_val;
                     } else {
                         const val_copy = try self.allocator.alloc(u8, arg.len);
@@ -414,9 +436,13 @@ pub const Parser = struct {
                 }
             }
         }
+        var checked_flags = std.AutoHashMapUnmanaged(*FlagInfo, void){};
+        defer checked_flags.deinit(self.allocator);
         var fit = self.flags.iterator();
         while (fit.next()) |entry| {
             const flag_info = entry.value_ptr.*;
+            if (checked_flags.contains(flag_info)) continue;
+            checked_flags.put(self.allocator, flag_info, {}) catch {};
             if (flag_info.required and flag_info.count == 0) {
                 try self.appendError("Missing required flag: ", entry.key_ptr.*);
             }
@@ -452,8 +478,7 @@ pub const Parser = struct {
     }
 
     pub fn flagCount(self: *Parser, name: []const u8) usize {
-        var resolved = name;
-        if (self.flag_aliases.get(name)) |alias| resolved = alias;
+        const resolved = utils.resolveFlagAlias(name, self.flag_aliases, self.short_flags);
         if (self.flags.get(resolved)) |flag_ptr| {
             if (self.flag_counts.get(flag_ptr)) |count| return count;
         }
@@ -465,8 +490,7 @@ pub const Parser = struct {
     }
 
     pub fn getOption(self: *Parser, name: []const u8) ?[]const u8 {
-        var resolved = name;
-        if (self.option_aliases.get(name)) |alias| resolved = alias else if (self.short_options.get(name)) |opt| resolved = opt;
+        const resolved = utils.resolveOptionAlias(name, self.option_aliases, self.short_options);
         if (self.options.get(resolved)) |opt| {
             return opt.value;
         }
@@ -506,7 +530,7 @@ pub const Parser = struct {
             if (entry.value_ptr.hidden) continue;
             const opt = entry.value_ptr;
             var line_buf: [128]u8 = undefined;
-            var line: []u8 = line_buf[0..0];
+
             var short_name: ?[]const u8 = null;
             var short_it = self.short_options.iterator();
             while (short_it.next()) |short_entry| {
@@ -515,59 +539,59 @@ pub const Parser = struct {
                     break;
                 }
             }
-            if (short_name) |s| {
-                const res = std.fmt.bufPrint(&line_buf, "  {s}, {s}", .{ s, entry.key_ptr.* }) catch unreachable;
-                line = line_buf[0..res.len];
-            } else {
-                const res = std.fmt.bufPrint(&line_buf, "      {s}", .{entry.key_ptr.*}) catch unreachable;
-                line = line_buf[0..res.len];
-            }
-            var pad_len = line.len;
-            while (pad_len < 22 and pad_len < line_buf.len) : (pad_len += 1) {
-                line_buf[pad_len] = ' ';
-            }
-            line = line_buf[0..pad_len];
-            std.debug.print("{s}  {s}", .{ line, opt.help });
+
+            const res = if (short_name) |s|
+                std.fmt.bufPrint(&line_buf, "  {s}, {s}", .{ s, entry.key_ptr.* }) catch unreachable
+            else
+                std.fmt.bufPrint(&line_buf, "      {s}", .{entry.key_ptr.*}) catch unreachable;
+            const line = line_buf[0..res.len];
+
+            const pad_len = utils.padToColumn(&line_buf, line.len, 22);
+            const padded_line = line_buf[0..pad_len];
+            std.debug.print("{s}  {s}", .{ padded_line, opt.help });
             if (opt.default.len > 0) {
                 std.debug.print(" (default: {s})", .{opt.default});
             }
             std.debug.print("\n", .{});
         }
-        var fit = self.flags.iterator();
-        while (fit.next()) |entry| {
-            if (entry.value_ptr.*.hidden) continue;
-            const flag = entry.value_ptr.*;
+        var fcit = self.flag_counts.iterator();
+        while (fcit.next()) |entry| {
+            const flag = entry.key_ptr.*;
+            if (flag.hidden) continue;
             var line_buf: [128]u8 = undefined;
-            var line: []u8 = line_buf[0..0];
+            var line: []u8 = undefined;
+
+            var short_name: ?[]const u8 = null;
             var long_name: ?[]const u8 = null;
-            var long_it = self.flags.iterator();
-            while (long_it.next()) |long_entry| {
-                const key = long_entry.key_ptr.*;
-                if (key.len > 2 and key[0] == '-' and key[1] == '-') {
-                    if (std.mem.eql(u8, long_entry.value_ptr.*.help, flag.help)) {
-                        long_name = key;
-                        break;
+            var sf_it = self.short_flags.iterator();
+            while (sf_it.next()) |sf_entry| {
+                const key = sf_entry.key_ptr.*;
+                const value = sf_entry.value_ptr.*;
+                if (self.flags.get(value)) |ptr| {
+                    if (ptr == flag) {
+                        if (key.len == 2) {
+                            short_name = key;
+                        } else {
+                            long_name = key;
+                        }
                     }
                 }
             }
-            if (long_name) |l| {
-                const key = entry.key_ptr.*;
-                if (key.len == 2 and key[0] == '-') {
-                    const res = std.fmt.bufPrint(&line_buf, "  {s}, {s}", .{ key, l }) catch unreachable;
-                    line = line_buf[0..res.len];
-                } else {
-                    const res = std.fmt.bufPrint(&line_buf, "      {s}", .{key}) catch unreachable;
-                    line = line_buf[0..res.len];
-                }
-            } else {
-                const key = entry.key_ptr.*;
-                const res = std.fmt.bufPrint(&line_buf, "      {s}", .{key}) catch unreachable;
+
+            if (short_name) |s| {
+                const res = if (long_name) |l|
+                    std.fmt.bufPrint(&line_buf, "  {s}, {s}", .{ s, l }) catch unreachable
+                else
+                    std.fmt.bufPrint(&line_buf, "  {s}", .{s}) catch unreachable;
                 line = line_buf[0..res.len];
+            } else if (long_name) |l| {
+                const res = std.fmt.bufPrint(&line_buf, "      {s}", .{l}) catch unreachable;
+                line = line_buf[0..res.len];
+            } else {
+                line = &.{};
             }
-            var pad_len = line.len;
-            while (pad_len < 22 and pad_len < line_buf.len) : (pad_len += 1) {
-                line_buf[pad_len] = ' ';
-            }
+
+            const pad_len = utils.padToColumn(&line_buf, line.len, 22);
             line = line_buf[0..pad_len];
             std.debug.print("{s}  {s}\n", .{ line, flag.help });
         }
@@ -703,24 +727,5 @@ pub const Parser = struct {
     fn printHelpComplexGrouped(self: *Parser) void {
         std.debug.print("[complex_grouped help output: show mutex groups and nested groupings here]\n", .{});
         self.printHelpFlat();
-    }
-
-    fn printWrapped(text: []const u8, indent: usize) void {
-        var line_col: usize = 0;
-        var indent_buf: [64]u8 = undefined;
-        if (indent > indent_buf.len) return;
-        var i: usize = 0;
-        while (i < indent) : (i += 1) {
-            indent_buf[i] = ' ';
-        }
-        for (text) |c| {
-            if (line_col == 0 and indent > 0) std.debug.print("{s}", .{indent_buf[0..indent]});
-            std.debug.print("{c}", .{c});
-            line_col += 1;
-            if (line_col >= 50 and c == ' ') {
-                std.debug.print("\n", .{});
-                line_col = 0;
-            }
-        }
     }
 };

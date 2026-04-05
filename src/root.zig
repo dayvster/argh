@@ -6,6 +6,7 @@ pub const OptionInfo = @import("argparse.zig").OptionInfo;
 pub const PositionalInfo = @import("argparse.zig").PositionalInfo;
 pub const MutexGroup = @import("argparse.zig").MutexGroup;
 pub const HelpStyle = @import("argparse.zig").HelpStyle;
+pub const utils = @import("utils/utils.zig");
 
 test "root includes all types" {
     const P = Parser;
@@ -17,4 +18,8 @@ test "root includes all types" {
     const MG = MutexGroup;
     const HS = HelpStyle;
     _ = .{ P, PE, OT, FI, OI, PI, MG, HS };
+}
+
+test {
+    _ = @import("tests/parser_test.zig");
 }
