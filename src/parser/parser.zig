@@ -51,6 +51,57 @@ pub const Parser = struct {
         };
     }
 
+    pub fn deinit(self: *Parser) void {
+        if (self.program_name) |n| {
+            self.allocator.free(n);
+        }
+        var fit = self.flags.iterator();
+        while (fit.next()) |entry| {
+            self.allocator.destroy(entry.value_ptr.*);
+        }
+        self.flags.deinit(self.allocator);
+
+        var oit = self.options.iterator();
+        while (oit.next()) |entry| {
+            const opt = entry.value_ptr;
+            if (opt.value.ptr != opt.default.ptr) {
+                self.allocator.free(opt.value);
+            }
+        }
+        self.options.deinit(self.allocator);
+
+        for (self.positionals.items) |*pos| {
+            if (pos.value) |v| {
+                self.allocator.free(v);
+            }
+        }
+        self.positionals.deinit(self.allocator);
+
+        for (self.errors.items) |e| {
+            self.allocator.free(e);
+        }
+        self.errors.deinit(self.allocator);
+
+        self.deprecation_warnings.deinit(self.allocator);
+        self.flag_counts.deinit(self.allocator);
+        self.short_options.deinit(self.allocator);
+        self.short_flags.deinit(self.allocator);
+        self.option_aliases.deinit(self.allocator);
+        self.flag_aliases.deinit(self.allocator);
+
+        var mit = self.mutex_groups.iterator();
+        while (mit.next()) |entry| {
+            entry.value_ptr.members.deinit(self.allocator);
+        }
+        self.mutex_groups.deinit(self.allocator);
+
+        var sit = self.subcommands.iterator();
+        while (sit.next()) |entry| {
+            entry.value_ptr.*.deinit();
+        }
+        self.subcommands.deinit(self.allocator);
+    }
+
     pub fn setProgramName(self: *Parser, name: []const u8) !void {
         if (self.program_name) |old| {
             self.allocator.free(old);
@@ -293,6 +344,27 @@ pub const Parser = struct {
     }
 
     pub fn parse(self: *Parser) !void {
+        for (self.errors.items) |e| {
+            self.allocator.free(e);
+        }
+        self.errors.items.len = 0;
+
+        for (self.positionals.items) |*pos| {
+            if (pos.value) |v| {
+                self.allocator.free(v);
+                pos.value = null;
+            }
+        }
+
+        var oit = self.options.iterator();
+        while (oit.next()) |entry| {
+            const opt = entry.value_ptr;
+            if (opt.value.ptr != opt.default.ptr) {
+                self.allocator.free(opt.value);
+                opt.value = opt.default;
+            }
+        }
+
         var i: usize = 0;
         var pos_idx: usize = 0;
         var seen: std.StringHashMapUnmanaged(bool) = .{};
@@ -429,8 +501,8 @@ pub const Parser = struct {
                 try self.appendError("Missing required flag: ", entry.key_ptr.*);
             }
         }
-        var oit = self.options.iterator();
-        while (oit.next()) |entry| {
+        var required_check = self.options.iterator();
+        while (required_check.next()) |entry| {
             const opt = entry.value_ptr;
             const key = entry.key_ptr.*;
             if (opt.required) {
@@ -550,7 +622,7 @@ pub const Parser = struct {
             const flag = entry.key_ptr.*;
             if (flag.hidden) continue;
             var line_buf: [128]u8 = undefined;
-            var line: []u8 = undefined;
+            var line: []u8 = line_buf[0..0];
 
             var short_name: ?[]const u8 = null;
             var long_name: ?[]const u8 = null;
