@@ -8,6 +8,7 @@ pub const ParseError = error{
     InvalidFlag,
     OutOfRange,
     AliasConflict,
+    InvalidAliasFormat,
     OutOfMemory,
 };
 
@@ -18,6 +19,7 @@ pub const FlagInfo = struct {
     required: bool = false,
     group: ?[]const u8 = null,
     hidden: bool = false,
+    deprecated: bool = false,
     count: usize = 0,
 };
 
@@ -31,6 +33,7 @@ pub const OptionInfo = struct {
     typ: OptionType = .string,
     group: ?[]const u8 = null,
     hidden: bool = false,
+    deprecated: bool = false,
     min_int: ?i64 = null,
     max_int: ?i64 = null,
     min_float: ?f64 = null,
@@ -45,6 +48,7 @@ pub const PositionalInfo = struct {
     default: ?[]const u8 = null,
     typ: OptionType = .string,
     hidden: bool = false,
+    deprecated: bool = false,
     min_count: usize = 1,
     max_count: usize = 1,
 };
@@ -139,6 +143,7 @@ pub const Parser = struct {
     flag_aliases: std.StringHashMapUnmanaged([]const u8),
     positionals: std.ArrayListUnmanaged(PositionalInfo),
     errors: std.ArrayListUnmanaged([]const u8),
+    deprecation_warnings: std.ArrayListUnmanaged([]const u8),
     mutex_groups: std.StringHashMapUnmanaged(MutexGroup),
     subcommands: std.StringHashMapUnmanaged(*Parser),
 
@@ -206,6 +211,7 @@ pub const Parser = struct {
             .flag_aliases = .{},
             .positionals = .{},
             .errors = .{},
+            .deprecation_warnings = .{},
             .mutex_groups = .{},
             .subcommands = .{},
         };
@@ -308,6 +314,7 @@ pub const Parser = struct {
     ///   canonical: The canonical option name (e.g. "--name").
     pub fn addOptionAlias(self: *Parser, alias: []const u8, canonical: []const u8) ParseError!void {
         if (self.options.get(canonical) == null) return error.InvalidOption;
+        if (!isValidAliasFormat(alias)) return error.InvalidAliasFormat;
         if (self.options.contains(alias) or self.flags.contains(alias) or
             self.short_options.contains(alias) or self.short_flags.contains(alias) or
             self.option_aliases.contains(alias) or self.flag_aliases.contains(alias))
@@ -324,6 +331,7 @@ pub const Parser = struct {
     ///   canonical: The canonical flag name (e.g. "--verbose").
     pub fn addFlagAlias(self: *Parser, alias: []const u8, canonical: []const u8) ParseError!void {
         if (self.flags.get(canonical) == null) return error.InvalidFlag;
+        if (!isValidAliasFormat(alias)) return error.InvalidAliasFormat;
         if (self.options.contains(alias) or self.flags.contains(alias) or
             self.short_options.contains(alias) or self.short_flags.contains(alias) or
             self.option_aliases.contains(alias) or self.flag_aliases.contains(alias))
@@ -331,6 +339,12 @@ pub const Parser = struct {
             return error.AliasConflict;
         }
         try self.flag_aliases.put(self.allocator, alias, canonical);
+    }
+
+    fn isValidAliasFormat(name: []const u8) bool {
+        if (std.mem.startsWith(u8, name, "--")) return true;
+        if (std.mem.startsWith(u8, name, "-") and name.len == 2) return true;
+        return false;
     }
 
     /// Add a long option (e.g. --name) with default value and help text.
@@ -514,10 +528,10 @@ pub const Parser = struct {
                         i += 1;
                         try seen.put(self.allocator, resolved, true);
                     } else {
-                        try self.appendError("Missing value for option: ", arg);
+                        try self.appendError("Missing value for option: ", resolved);
                     }
                 } else {
-                    try self.appendError("Unknown argument: ", arg);
+                    try self.appendError("Unknown argument: ", resolved);
                 }
             } else if (std.mem.startsWith(u8, arg, "-") and arg.len == 2) {
                 var resolved: []const u8 = arg;
@@ -558,6 +572,9 @@ pub const Parser = struct {
                         std.mem.copyForwards(u8, val_copy, val);
                         opt.value = val_copy;
                         i += 1;
+                        if (opt.deprecated) {
+                            try self.deprecation_warnings.append(self.allocator, arg);
+                        }
                         try seen.put(self.allocator, resolved, true);
                     } else {
                         try self.appendError("Missing value for option: ", arg);
