@@ -1,5 +1,16 @@
 const std = @import("std");
 
+pub const ParseError = error{
+    InvalidType,
+    InvalidValue,
+    InvalidFlagName,
+    InvalidOption,
+    InvalidFlag,
+    OutOfRange,
+    AliasConflict,
+    OutOfMemory,
+};
+
 /// Argument parser for command-line interfaces.
 /// Main argument parser struct. Holds all argument definitions and parsing state.
 pub const FlagInfo = struct {
@@ -124,6 +135,8 @@ pub const Parser = struct {
     options: std.StringHashMapUnmanaged(OptionInfo),
     short_options: std.StringHashMapUnmanaged([]const u8),
     short_flags: std.StringHashMapUnmanaged([]const u8),
+    option_aliases: std.StringHashMapUnmanaged([]const u8),
+    flag_aliases: std.StringHashMapUnmanaged([]const u8),
     positionals: std.ArrayListUnmanaged(PositionalInfo),
     errors: std.ArrayListUnmanaged([]const u8),
     mutex_groups: std.StringHashMapUnmanaged(MutexGroup),
@@ -189,6 +202,8 @@ pub const Parser = struct {
             .options = .{},
             .short_options = .{},
             .short_flags = .{},
+            .option_aliases = .{},
+            .flag_aliases = .{},
             .positionals = .{},
             .errors = .{},
             .mutex_groups = .{},
@@ -284,6 +299,38 @@ pub const Parser = struct {
         const group = MutexGroup{ .members = .{} };
 
         try self.mutex_groups.put(self.allocator, group_name, group);
+    }
+
+    /// Add an alias for an option (e.g. --name-alias -> --name).
+    ///
+    /// Args:
+    ///   alias: The alias name (e.g. "--name-alias").
+    ///   canonical: The canonical option name (e.g. "--name").
+    pub fn addOptionAlias(self: *Parser, alias: []const u8, canonical: []const u8) ParseError!void {
+        if (self.options.get(canonical) == null) return error.InvalidOption;
+        if (self.options.contains(alias) or self.flags.contains(alias) or
+            self.short_options.contains(alias) or self.short_flags.contains(alias) or
+            self.option_aliases.contains(alias) or self.flag_aliases.contains(alias))
+        {
+            return error.AliasConflict;
+        }
+        try self.option_aliases.put(self.allocator, alias, canonical);
+    }
+
+    /// Add an alias for a flag.
+    ///
+    /// Args:
+    ///   alias: The alias name (e.g. "-v").
+    ///   canonical: The canonical flag name (e.g. "--verbose").
+    pub fn addFlagAlias(self: *Parser, alias: []const u8, canonical: []const u8) ParseError!void {
+        if (self.flags.get(canonical) == null) return error.InvalidFlag;
+        if (self.options.contains(alias) or self.flags.contains(alias) or
+            self.short_options.contains(alias) or self.short_flags.contains(alias) or
+            self.option_aliases.contains(alias) or self.flag_aliases.contains(alias))
+        {
+            return error.AliasConflict;
+        }
+        try self.flag_aliases.put(self.allocator, alias, canonical);
     }
 
     /// Add a long option (e.g. --name) with default value and help text.
@@ -429,11 +476,17 @@ pub const Parser = struct {
         while (i < self.args.len) : (i += 1) {
             const arg = self.args[i];
             if (std.mem.startsWith(u8, arg, "--")) {
-                if (self.flags.getPtr(arg)) |flag_ptr_ptr| {
+                var resolved: []const u8 = arg;
+                if (self.flag_aliases.get(arg)) |alias| {
+                    resolved = alias;
+                } else if (self.option_aliases.get(arg)) |alias| {
+                    resolved = alias;
+                }
+                if (self.flags.getPtr(resolved)) |flag_ptr_ptr| {
                     const flag = flag_ptr_ptr.*;
                     // Only increment count for the canonical flag (the one with the lowest address)
                     var canonical_flag = flag;
-                    if (self.short_flags.get(arg)) |short| {
+                    if (self.short_flags.get(resolved)) |short| {
                         if (self.flags.getPtr(short)) |short_flag_ptr_ptr| {
                             const short_flag = short_flag_ptr_ptr.*;
                             if (@intFromPtr(short_flag) < @intFromPtr(canonical_flag)) {
@@ -445,11 +498,11 @@ pub const Parser = struct {
                         count_ptr.* += 1;
                         canonical_flag.count += 1;
                     }
-                    try seen.put(self.allocator, arg, true);
-                    if (self.short_flags.get(arg)) |short| {
+                    try seen.put(self.allocator, resolved, true);
+                    if (self.short_flags.get(resolved)) |short| {
                         try seen.put(self.allocator, short, true);
                     }
-                } else if (self.options.getPtr(arg)) |opt| {
+                } else if (self.options.getPtr(resolved)) |opt| {
                     if (i + 1 < self.args.len) {
                         if (opt.value.ptr != opt.default.ptr) {
                             self.allocator.free(opt.value);
@@ -459,7 +512,7 @@ pub const Parser = struct {
                         std.mem.copyForwards(u8, val_copy, val);
                         opt.value = val_copy;
                         i += 1;
-                        try seen.put(self.allocator, arg, true);
+                        try seen.put(self.allocator, resolved, true);
                     } else {
                         try self.appendError("Missing value for option: ", arg);
                     }
@@ -467,12 +520,19 @@ pub const Parser = struct {
                     try self.appendError("Unknown argument: ", arg);
                 }
             } else if (std.mem.startsWith(u8, arg, "-") and arg.len == 2) {
-                const short = arg;
-                if (self.flags.getPtr(short)) |flag_ptr_ptr| {
+                var resolved: []const u8 = arg;
+                if (self.flag_aliases.get(arg)) |alias| {
+                    resolved = alias;
+                } else if (self.short_options.get(arg)) |opt| {
+                    resolved = opt;
+                } else if (self.option_aliases.get(arg)) |alias| {
+                    resolved = alias;
+                }
+                if (self.flags.getPtr(resolved)) |flag_ptr_ptr| {
                     const flag = flag_ptr_ptr.*;
                     // Only increment count for the canonical flag (the one with the lowest address)
                     var canonical_flag = flag;
-                    if (self.short_flags.get(short)) |long| {
+                    if (self.short_flags.get(resolved)) |long| {
                         if (self.flags.getPtr(long)) |long_flag_ptr_ptr| {
                             const long_flag = long_flag_ptr_ptr.*;
                             if (@intFromPtr(long_flag) < @intFromPtr(canonical_flag)) {
@@ -484,28 +544,26 @@ pub const Parser = struct {
                         count_ptr.* += 1;
                         canonical_flag.count += 1;
                     }
-                    try seen.put(self.allocator, short, true);
-                    if (self.short_flags.get(short)) |long| {
+                    try seen.put(self.allocator, resolved, true);
+                    if (self.short_flags.get(resolved)) |long| {
                         try seen.put(self.allocator, long, true);
                     }
-                } else if (self.short_options.get(short)) |long| {
-                    if (self.options.getPtr(long)) |opt| {
-                        if (i + 1 < self.args.len) {
-                            if (opt.value.ptr != opt.default.ptr) {
-                                self.allocator.free(opt.value);
-                            }
-                            const val = self.args[i + 1];
-                            const val_copy = try self.allocator.alloc(u8, val.len);
-                            std.mem.copyForwards(u8, val_copy, val);
-                            opt.value = val_copy;
-                            i += 1;
-                            try seen.put(self.allocator, long, true);
-                        } else {
-                            try self.appendError("Missing value for option: ", long);
+                } else if (self.options.getPtr(resolved)) |opt| {
+                    if (i + 1 < self.args.len) {
+                        if (opt.value.ptr != opt.default.ptr) {
+                            self.allocator.free(opt.value);
                         }
+                        const val = self.args[i + 1];
+                        const val_copy = try self.allocator.alloc(u8, val.len);
+                        std.mem.copyForwards(u8, val_copy, val);
+                        opt.value = val_copy;
+                        i += 1;
+                        try seen.put(self.allocator, resolved, true);
+                    } else {
+                        try self.appendError("Missing value for option: ", arg);
                     }
                 } else {
-                    try self.appendError("Unknown short argument: ", short);
+                    try self.appendError("Unknown short argument: ", arg);
                 }
             } else {
                 if (pos_idx < self.positionals.items.len) {
@@ -1055,4 +1113,59 @@ test "hidden int and float options work" {
     try parser.parse();
     try std.testing.expectEqual(@as(?i64, 42), try parser.getOptionInt("--hidden-int"));
     try std.testing.expectEqual(@as(?f64, 3.14), try parser.getOptionFloat("--hidden-float"));
+}
+
+test "option aliases work for long options" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var args = [_][:0]const u8{
+        std.mem.sliceTo("--alias-name", 0),
+        std.mem.sliceTo("value", 0),
+    };
+    var parser = Parser.init(allocator, args[0..]);
+    try parser.addOption("--name", null, "default", "The name");
+    try parser.addOptionAlias("--alias-name", "--name");
+    try parser.parse();
+    try std.testing.expectEqualStrings("value", parser.getOption("--name").?);
+}
+
+test "flag aliases work" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var args = [_][:0]const u8{
+        std.mem.sliceTo("--chatty", 0),
+    };
+    var parser = Parser.init(allocator, args[0..]);
+    try parser.addFlag("-v", "--verbose", "Verbose output");
+    try parser.addFlagAlias("--chatty", "--verbose");
+    try parser.parse();
+    try std.testing.expect(parser.flagPresent("--verbose"));
+}
+
+test "short option aliases work" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var args = [_][:0]const u8{
+        std.mem.sliceTo("-n", 0),
+        std.mem.sliceTo("value", 0),
+    };
+    var parser = Parser.init(allocator, args[0..]);
+    try parser.addOption("--name", null, "default", "The name");
+    try parser.addOptionAlias("-n", "--name");
+    try parser.parse();
+    try std.testing.expectEqualStrings("value", parser.getOption("--name").?);
+}
+
+test "alias conflict is detected" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var parser = Parser.init(allocator, &.{});
+    try parser.addOption("--name", null, "default", "The name");
+    try std.testing.expectError(error.AliasConflict, parser.addOptionAlias("--name", "--name"));
+    try parser.addOption("--conflict", null, "default", "A conflicting option");
+    try std.testing.expectError(error.AliasConflict, parser.addOptionAlias("--conflict", "--name"));
 }
