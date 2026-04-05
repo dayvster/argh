@@ -150,7 +150,7 @@ pub const Parser = struct {
     /// Get the value of a bool option, or error if not present or invalid.
     pub fn getOptionBool(self: *Parser, name: []const u8) !?bool {
         var resolved = name;
-        if (self.option_aliases.get(name)) |alias| resolved = alias;
+        if (self.option_aliases.get(name)) |alias| resolved = alias else if (self.short_options.get(name)) |opt| resolved = opt;
         if (self.options.get(resolved)) |opt| {
             if (opt.typ != .bool) return error.InvalidType;
             const val = std.mem.trim(u8, opt.value, " \t\n\r");
@@ -447,7 +447,7 @@ pub const Parser = struct {
     /// Returns: The parsed int value, or error.
     pub fn getOptionInt(self: *Parser, name: []const u8) !?i64 {
         var resolved = name;
-        if (self.option_aliases.get(name)) |alias| resolved = alias;
+        if (self.option_aliases.get(name)) |alias| resolved = alias else if (self.short_options.get(name)) |opt| resolved = opt;
         if (self.options.get(resolved)) |opt| {
             if (opt.typ != .int) return error.InvalidType;
             const val = try std.fmt.parseInt(i64, opt.value, 10);
@@ -466,7 +466,7 @@ pub const Parser = struct {
     /// Returns: The parsed float value, or error.
     pub fn getOptionFloat(self: *Parser, name: []const u8) !?f64 {
         var resolved = name;
-        if (self.option_aliases.get(name)) |alias| resolved = alias;
+        if (self.option_aliases.get(name)) |alias| resolved = alias else if (self.short_options.get(name)) |opt| resolved = opt;
         if (self.options.get(resolved)) |opt| {
             if (opt.typ != .float) return error.InvalidType;
             const val = try std.fmt.parseFloat(f64, opt.value);
@@ -668,7 +668,9 @@ pub const Parser = struct {
 
     /// Get the value of an option, or null if not present.
     pub fn getOption(self: *Parser, name: []const u8) ?[]const u8 {
-        if (self.options.get(name)) |opt| {
+        var resolved = name;
+        if (self.option_aliases.get(name)) |alias| resolved = alias else if (self.short_options.get(name)) |opt| resolved = opt;
+        if (self.options.get(resolved)) |opt| {
             return opt.value;
         }
         return null;
@@ -681,7 +683,14 @@ pub const Parser = struct {
         }
     }
 
-    /// Prints a help message for all arguments, using the flat style by default.
+    /// Print all deprecation warnings to stderr.
+    pub fn printDeprecationWarnings(self: *Parser) void {
+        for (self.deprecation_warnings.items) |arg| {
+            std.debug.print("Warning: '{s}' is deprecated\n", .{arg});
+        }
+    }
+
+    /// Returns true if any deprecation warnings were generated.
     ///
     /// This is the simplest way to show help for your CLI. For advanced formatting,
     /// use `printHelpWithOptions`.
